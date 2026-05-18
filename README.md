@@ -1,3 +1,9 @@
+---
+
+![https://raw.githubusercontent.com/hrabanazviking/bifrost-viewer/refs/heads/main/336860c7-24fa-4e82-80ea-933c5f3a67c5.jpeg](https://raw.githubusercontent.com/hrabanazviking/bifrost-viewer/refs/heads/main/336860c7-24fa-4e82-80ea-933c5f3a67c5.jpeg)
+
+---
+
 # Bifröst
 
 > *the shimmering bridge between the realm of raw knowledge and the realm of human sight*
@@ -76,6 +82,10 @@ systemctl --user enable --now bifrost.service
 ```
 
 `Restart=on-failure` + a memory ceiling keep it well-behaved on laptops.
+
+---
+
+![https://raw.githubusercontent.com/hrabanazviking/bifrost-viewer/refs/heads/main/2045f97c-0b92-4c8b-aecb-904f69ccdc3c.jpeg](https://raw.githubusercontent.com/hrabanazviking/bifrost-viewer/refs/heads/main/2045f97c-0b92-4c8b-aecb-904f69ccdc3c.jpeg)
 
 ---
 

@@ -127,6 +127,10 @@ Co-built by [Volmarr Wyrd](https://github.com/hrabanazviking) and Claude during 
 
 ---
 
+![https://raw.githubusercontent.com/hrabanazviking/bifrost-viewer/refs/heads/main/MIT_license_Rune_Forge_AI.jpeg](https://raw.githubusercontent.com/hrabanazviking/bifrost-viewer/refs/heads/main/MIT_license_Rune_Forge_AI.jpeg)
+
+---
+
 ## License
 
 MIT License

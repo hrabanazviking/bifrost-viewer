@@ -1,0 +1,803 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Bifröst — Knowledge Graph</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #05060d;
+    --fg: #e8ecff;
+    --dim: #8b93b8;
+    --accent: #7df9ff;
+    --hot: #ffea00;
+    --panel: rgba(10, 14, 30, 0.82);
+    --border: rgba(125, 249, 255, 0.25);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font-family: ui-monospace, "Cascadia Code", "JetBrains Mono", Menlo, monospace; overflow: hidden; }
+  #graph { position: fixed; inset: 0; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; backdrop-filter: blur(6px); }
+  #hud { position: fixed; top: 12px; left: 12px; z-index: 5; max-width: 320px; }
+  #hud h1 { margin: 0 0 4px; font-size: 16px; letter-spacing: 0.18em;
+    background: linear-gradient(90deg, #ff3b3b, #ff8a00, #ffea00, #32ff7e, #18d2ff, #6a5cff, #c84cff);
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  #hud .sub { color: var(--dim); font-size: 11px; margin-bottom: 8px; }
+  #stats { font-size: 11px; color: var(--dim); line-height: 1.6; }
+  #stats b { color: var(--fg); }
+  .toggles { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .toggle { font-size: 10px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border);
+    background: transparent; color: var(--fg); cursor: pointer; letter-spacing: 0.08em;
+    font-family: inherit; }
+  .toggle.on { background: rgba(125, 249, 255, 0.15); color: var(--accent); border-color: var(--accent); }
+  #legend { margin-top: 8px; max-height: 30vh; overflow-y: auto; font-size: 11px; }
+  #legend .row { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; opacity: 0.85; }
+  #legend .row:hover { opacity: 1; color: var(--accent); }
+  #legend .row.muted { opacity: 0.25; }
+  #legend .swatch { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 10px;
+    box-shadow: 0 0 6px currentColor; }
+  #legend .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  #search { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 5;
+    width: 460px; max-width: calc(100% - 24px); display: flex; gap: 6px; align-items: center; }
+  #search input[type=text] { flex: 1; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 14px; color: var(--fg); font-family: inherit; font-size: 13px;
+    backdrop-filter: blur(6px); outline: none; }
+  #search input[type=text]:focus { border-color: var(--accent); box-shadow: 0 0 12px rgba(125,249,255,0.3); }
+
+  /* URL ingest control */
+  #ingest { position: fixed; top: 60px; right: 12px; z-index: 5;
+    display: flex; gap: 4px; align-items: center; }
+  #ingest input[type=text] { width: 260px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 10px; color: var(--fg); font-family: inherit; font-size: 11px;
+    backdrop-filter: blur(6px); outline: none; }
+  #ingest input[type=text]:focus { border-color: var(--accent); }
+  #ingest button { background: transparent; border: 1px solid var(--border); color: var(--fg);
+    padding: 6px 12px; border-radius: 8px; cursor: pointer; font-family: inherit; font-size: 10px;
+    letter-spacing: 0.1em; }
+  #ingest button:hover { background: rgba(125, 249, 255, 0.12); color: var(--accent); }
+  #ingest button:disabled { opacity: 0.5; cursor: wait; }
+
+  /* Toasts */
+  #toasts { position: fixed; bottom: 80px; right: 12px; z-index: 7;
+    display: flex; flex-direction: column; gap: 6px; max-width: 360px; }
+  .toast { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 12px; font-size: 11px; color: var(--fg); backdrop-filter: blur(6px);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4); animation: toastIn 0.25s ease-out;
+    line-height: 1.4; }
+  .toast .head { font-size: 10px; letter-spacing: 0.15em; color: var(--accent); margin-bottom: 2px; }
+  .toast.ok   { border-color: rgba(50,255,126,0.6); }
+  .toast.ok .head { color: #32ff7e; }
+  .toast.err  { border-color: rgba(255,107,107,0.6); }
+  .toast.err .head { color: #ff6b6b; }
+  .toast.live { border-color: rgba(255,234,0,0.6); }
+  .toast.live .head { color: #ffea00; }
+  .toast .url { color: var(--dim); font-size: 10px; word-break: break-all; }
+  .toast .meta { color: var(--dim); font-size: 10px; margin-top: 4px; }
+  .toast button.x { background: none; border: none; color: var(--dim); cursor: pointer;
+    font-size: 12px; float: right; margin-top: -2px; }
+  @keyframes toastIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  #search label { font-size: 10px; color: var(--dim); display: flex; align-items: center; gap: 4px;
+    padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+    background: var(--panel); backdrop-filter: blur(6px); letter-spacing: 0.08em; }
+  #search label input { margin: 0; accent-color: var(--accent); }
+  #search-help { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); z-index: 5;
+    font-size: 10px; color: var(--dim); letter-spacing: 0.1em; }
+
+  #panel-right { position: fixed; top: 100px; right: 12px; z-index: 5; width: 380px;
+    max-height: calc(100vh - 120px); overflow-y: auto; display: none; }
+  #panel-right.open { display: block; }
+  #panel-right .doc { color: var(--accent); font-size: 11px; letter-spacing: 0.1em; }
+  #panel-right .meta { color: var(--dim); font-size: 10px; margin-bottom: 8px; }
+  #panel-right pre { white-space: pre-wrap; word-break: break-word; font-size: 12px;
+    line-height: 1.5; margin: 0; color: var(--fg); }
+  #panel-right button.close { position: absolute; top: 8px; right: 10px; background: none;
+    border: none; color: var(--dim); font-size: 18px; cursor: pointer; }
+
+  #pathbar { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 5;
+    font-size: 11px; color: var(--dim); display: none; gap: 14px; align-items: center; }
+  #pathbar.on { display: flex; }
+  #pathbar .chip { color: var(--accent); padding: 2px 8px; border: 1px solid var(--accent);
+    border-radius: 6px; }
+  #pathbar button { background: transparent; border: 1px solid var(--border); color: var(--fg);
+    padding: 4px 10px; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 10px;
+    letter-spacing: 0.1em; }
+
+  #controls { position: fixed; bottom: 12px; right: 12px; z-index: 5; font-size: 11px; color: var(--dim);
+    display: flex; gap: 8px; align-items: center; }
+  #controls button { background: transparent; border: 1px solid var(--border); color: var(--fg);
+    padding: 4px 10px; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 11px;
+    letter-spacing: 0.1em; }
+  #controls button:hover { background: rgba(125, 249, 255, 0.1); color: var(--accent); }
+
+  #kg { position: fixed; bottom: 12px; left: 12px; z-index: 5; font-size: 10px; color: var(--dim);
+    letter-spacing: 0.1em; padding: 8px 12px; }
+  #kg b { color: var(--fg); }
+  #kg .bar { width: 140px; height: 3px; background: rgba(255,255,255,0.06); border-radius: 2px;
+    overflow: hidden; margin-top: 4px; }
+  #kg .bar > div { height: 100%; background: linear-gradient(90deg, #18d2ff, #c84cff); transition: width 0.5s; }
+  #gpu { position: fixed; bottom: 96px; left: 12px; z-index: 5; font-size: 10px; color: var(--dim);
+    letter-spacing: 0.08em; padding: 8px 12px; min-width: 200px; display: none; }
+  #gpu .title { font-size: 9px; letter-spacing: 0.2em; color: var(--accent); margin-bottom: 4px; }
+  #gpu .row { display: flex; justify-content: space-between; align-items: center; padding: 2px 0; }
+  #gpu .label { color: var(--dim); }
+  #gpu .val { color: var(--fg); font-weight: bold; min-width: 80px; text-align: right; }
+  #gpu .bar { width: 100%; height: 3px; background: rgba(255,255,255,0.06); border-radius: 2px;
+    overflow: hidden; margin-top: 3px; }
+  #gpu .bar > div { height: 100%; transition: width 0.6s, background 0.6s; }
+  #gpu .ok    { background: linear-gradient(90deg, #32ff7e, #18d2ff); }
+  #gpu .warm  { background: linear-gradient(90deg, #ffea00, #ff8a00); }
+  #gpu .hot   { background: linear-gradient(90deg, #ff8a00, #ff3b3b); }
+
+  #edge-tooltip { position: fixed; pointer-events: none; z-index: 6; font-size: 10px;
+    background: rgba(10,14,30,0.9); color: var(--fg); padding: 4px 8px; border: 1px solid var(--accent);
+    border-radius: 6px; display: none; max-width: 260px; }
+
+  #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: var(--bg); z-index: 10; flex-direction: column; gap: 14px; }
+  #loading .bar { width: 220px; height: 4px; border-radius: 2px; overflow: hidden;
+    background: rgba(255,255,255,0.06); position: relative; }
+  #loading .bar::after { content: ""; position: absolute; inset: 0;
+    background: linear-gradient(90deg, #ff3b3b, #ffea00, #18d2ff, #c84cff); background-size: 200% 100%;
+    animation: shimmer 1.2s linear infinite; }
+  @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+  .ghost { color: var(--dim); font-size: 11px; letter-spacing: 0.2em; }
+</style>
+</head>
+<body>
+  <div id="loading">
+    <div class="ghost">opening the bridge…</div>
+    <div class="bar"></div>
+  </div>
+
+  <div id="hud" class="panel">
+    <h1>BIFRÖST</h1>
+    <div class="sub">knowledge graph · 3D</div>
+    <div id="stats"></div>
+    <div class="toggles">
+      <button class="toggle on" data-level="chunk">CHUNKS</button>
+      <button class="toggle" data-level="document">DOCS</button>
+      <button class="toggle" data-level="entity">ENTITIES</button>
+    </div>
+    <div class="toggles">
+      <button class="toggle on" data-colorby="doc">BY DOC</button>
+      <button class="toggle" data-colorby="cluster">BY CLUSTER</button>
+      <button class="toggle" id="btn-cluster-names">NAME CLUSTERS</button>
+    </div>
+    <div id="legend"></div>
+  </div>
+
+  <div id="search">
+    <input type="text" id="q" placeholder="search the graph…  (Enter)" />
+    <label><input type="checkbox" id="hyde" /> HYDE</label>
+    <label><input type="checkbox" id="skry" /> SKRY</label>
+  </div>
+  <div id="search-help">shift+click two nodes for path · SKRY: entity neighborhood lookup · HYDE: hypothetical-answer embed</div>
+
+  <div id="ingest">
+    <input type="text" id="ingest-url" placeholder="paste URL to feed the corpus…" />
+    <button id="ingest-btn" type="button">+ ADD URL</button>
+  </div>
+
+  <div id="toasts"></div>
+
+  <div id="panel-right" class="panel">
+    <button class="close" onclick="closePanel()">×</button>
+    <div class="doc" id="panel-doc"></div>
+    <div class="meta" id="panel-meta"></div>
+    <pre id="panel-text"></pre>
+  </div>
+
+  <div id="pathbar">
+    <span class="chip" id="path-a">A: —</span>
+    <span>→</span>
+    <span class="chip" id="path-b">B: —</span>
+    <span id="path-info"></span>
+    <button onclick="clearPath()">clear</button>
+  </div>
+
+  <div id="controls">
+    <button onclick="refresh()">↻ rebuild graph</button>
+  </div>
+
+  <div id="gpu" class="panel">
+    <div class="title">GPU</div>
+    <div id="gpu-name" style="font-size:9px;color:var(--dim);margin-bottom:4px">…</div>
+    <div class="row"><span class="label">UTIL</span><span class="val" id="gpu-util">—</span></div>
+    <div class="bar"><div id="gpu-util-bar" class="ok" style="width:0%"></div></div>
+    <div class="row"><span class="label">VRAM</span><span class="val" id="gpu-mem">—</span></div>
+    <div class="bar"><div id="gpu-mem-bar" class="ok" style="width:0%"></div></div>
+    <div class="row"><span class="label">TEMP</span><span class="val" id="gpu-temp">—</span></div>
+    <div class="row"><span class="label">POWER</span><span class="val" id="gpu-power">—</span></div>
+  </div>
+
+  <div id="kg" class="panel">
+    <div>SKEIN: <b id="skein-status">…</b></div>
+    <div class="bar"><div id="skein-bar" style="width:0%"></div></div>
+    <div style="margin-top:6px">
+      <button class="toggle" id="btn-skein-build" style="font-size:9px">↻ BUILD SKEIN</button>
+    </div>
+  </div>
+
+  <div id="edge-tooltip"></div>
+  <div id="graph"></div>
+
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three-spritetext@1.9.0/dist/three-spritetext.min.js"></script>
+<script src="https://unpkg.com/3d-force-graph@1.73.4/dist/3d-force-graph.min.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const TOKEN = params.get("token") || "";
+const AUTH = { headers: { Authorization: "Bearer " + TOKEN } };
+
+let Graph = null;
+let rawData = null;
+let level = "chunk";
+let colorBy = "doc";              // 'doc' | 'cluster'
+let clusterNames = null;
+let hiddenIds = new Set();        // doc or cluster ids
+let highlightNodes = new Set();   // ids highlighted by search
+let pathNodes = new Set();
+let pathLinks = new Set();        // "a-b" canonical
+let pathA = null, pathB = null;
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...AUTH, ...opts, headers: { ...AUTH.headers, ...(opts.headers||{}) } });
+  if (!r.ok) throw new Error(path + " → " + r.status);
+  return r.json();
+}
+
+function colorOf(node) {
+  if (highlightNodes.has(node.id)) return "#ffea00";
+  if (pathNodes.has(node.id)) return "#7df9ff";
+  if (level === "entity") return node.color;
+  return colorBy === "cluster" ? node.color_cluster : node.color_doc;
+}
+
+function nodeVisible(node) {
+  if (level === "entity") return !hiddenIds.has(node.kind);
+  if (level === "chunk") {
+    if (colorBy === "cluster") return !hiddenIds.has(node.cluster);
+    return !hiddenIds.has(node.doc_id);
+  }
+  return !hiddenIds.has(node.id);
+}
+
+function applyData() {
+  if (!Graph || !rawData) return;
+  const ns = rawData.nodes.filter(nodeVisible);
+  const visIds = new Set(ns.map(n => n.id));
+  const ls = rawData.links.filter(l =>
+    visIds.has(l.source.id ?? l.source) && visIds.has(l.target.id ?? l.target));
+  Graph.graphData({ nodes: ns, links: ls });
+}
+
+function renderStats(s) {
+  if (level === "entity") {
+    document.getElementById("stats").innerHTML =
+      `<b>${s.n_entities||0}</b> entities · <b>${s.n_relations||0}</b> relations · <b>${s.n_kinds||0}</b> kinds`;
+  } else {
+    document.getElementById("stats").innerHTML =
+      `<b>${s.n_docs}</b> docs · <b>${s.n_chunks}</b> chunks · <b>${s.n_clusters||0}</b> clusters · <b>${s.n_edges}</b> edges`;
+  }
+}
+
+function renderLegend() {
+  const el = document.getElementById("legend");
+  let rows;
+  if (level === "entity") {
+    rows = (rawData.kinds || []).map(k => ({
+      id: k.kind, color: k.color, title: k.kind
+    }));
+  } else if (level === "chunk" && colorBy === "cluster") {
+    const clusters = rawData.clusters || [];
+    rows = clusters.map(c => ({
+      id: c.id, color: c.color,
+      title: clusterNames && clusterNames[c.id] ? `${clusterNames[c.id]} (${c.size})` : `Cluster ${c.id} (${c.size})`
+    }));
+  } else {
+    rows = (rawData.documents || []).map(d => ({ id: d.id, color: d.color, title: d.title }));
+  }
+  el.innerHTML = rows.map(r => `
+    <div class="row" data-id="${typeof r.id === 'string' ? r.id : r.id}">
+      <div class="swatch" style="background:${r.color};color:${r.color}"></div>
+      <div class="title" title="${(r.title||'').replace(/"/g,'&quot;')}">${r.title||''}</div>
+    </div>`).join("");
+  el.querySelectorAll(".row").forEach(row => {
+    row.addEventListener("click", () => {
+      const raw = row.dataset.id;
+      const id = (level === "entity") ? raw : Number(raw);
+      if (hiddenIds.has(id)) { hiddenIds.delete(id); row.classList.remove("muted"); }
+      else { hiddenIds.add(id); row.classList.add("muted"); }
+      applyData();
+    });
+  });
+}
+
+async function openPanel(node) {
+  const panel = document.getElementById("panel-right");
+  document.getElementById("panel-doc").textContent =
+    level === "entity" ? node.name : node.doc_title;
+  document.getElementById("panel-meta").textContent =
+    level === "entity"
+      ? `${node.kind} · ${node.mentions} mentions · entity #${node.id}`
+      : level === "document"
+        ? `${node.size_chunks||0} chunks · doc ${node.id} · ${node.content_type||""}`
+        : `chunk #${node.chunk_index} · doc ${node.doc_id} · ${node.content_type||""}`;
+  document.getElementById("panel-text").textContent = "loading…";
+  panel.classList.add("open");
+  if (level === "chunk") {
+    try {
+      const full = await api("/api/chunk/" + node.id);
+      document.getElementById("panel-text").textContent = full.text;
+    } catch { document.getElementById("panel-text").textContent = node.snippet; }
+  } else if (level === "entity") {
+    try {
+      const r = await api(`/api/skry?q=${encodeURIComponent(node.name)}&top_entities=15&top_chunks=80`);
+      let body = `[skry · ${r.vocab_mode} vocabulary]\n\nWoven into:\n`;
+      for (const e of r.entities) {
+        body += `  • ${e.name}  (${e.kind || ''}) — appears ${e.count}× across ${e.n_docs} docs · score ${e.score}\n`;
+      }
+      body += `\nEvidence chunks: ${r.evidence_chunk_ids.slice(0, 10).join(", ")}\n`;
+      // Also list typed predicates from Skein
+      const outEdges = (rawData.links || []).filter(l =>
+        (l.source.id ?? l.source) === node.id || (l.target.id ?? l.target) === node.id);
+      if (outEdges.length) {
+        body += `\nSkein relations:\n`;
+        for (const l of outEdges) {
+          const otherId = (l.source.id ?? l.source) === node.id ? (l.target.id ?? l.target) : (l.source.id ?? l.source);
+          const other = rawData.nodes.find(n => n.id === otherId);
+          body += `  ${node.name} —[${l.predicate}]→ ${other ? other.name : otherId}  (sim ${l.sim})\n`;
+        }
+      }
+      document.getElementById("panel-text").textContent = body;
+    } catch (e) {
+      document.getElementById("panel-text").textContent = "skry error: " + e.message;
+    }
+  } else {
+    document.getElementById("panel-text").textContent = node.snippet || "";
+  }
+}
+function closePanel() { document.getElementById("panel-right").classList.remove("open"); }
+
+function clearPath() {
+  pathA = pathB = null; pathNodes.clear(); pathLinks.clear();
+  document.getElementById("pathbar").classList.remove("on");
+  Graph && Graph.refresh();
+}
+
+async function pickForPath(node) {
+  if (level !== "chunk") return;
+  if (!pathA) {
+    pathA = node.id;
+    document.getElementById("path-a").textContent = "A: " + node.id;
+    document.getElementById("path-b").textContent = "B: —";
+    document.getElementById("path-info").textContent = "select B (shift+click)";
+    document.getElementById("pathbar").classList.add("on");
+    pathNodes = new Set([node.id]);
+    pathLinks.clear();
+    Graph && Graph.refresh();
+    return;
+  }
+  pathB = node.id;
+  document.getElementById("path-b").textContent = "B: " + node.id;
+  document.getElementById("path-info").textContent = "finding…";
+  try {
+    const r = await api(`/api/path?a=${pathA}&b=${pathB}`);
+    if (!r.found) {
+      document.getElementById("path-info").textContent = "no path (raise edge density)";
+      pathNodes = new Set([pathA, pathB]);
+      pathLinks.clear();
+    } else {
+      pathNodes = new Set(r.nodes);
+      pathLinks = new Set(r.edges.map(e => `${Math.min(e.source,e.target)}-${Math.max(e.source,e.target)}`));
+      document.getElementById("path-info").textContent = `${r.nodes.length} hops`;
+    }
+  } catch (e) {
+    document.getElementById("path-info").textContent = "error";
+  }
+  Graph && Graph.refresh();
+}
+
+async function runSearch() {
+  const q = document.getElementById("q").value.trim();
+  if (!q) { highlightNodes.clear(); Graph && Graph.refresh(); return; }
+  const skryMode = document.getElementById("skry").checked;
+  if (skryMode) {
+    // SKRY: live entity-neighborhood lookup
+    try {
+      const r = await api(`/api/skry?q=${encodeURIComponent(q)}&top_entities=20&top_chunks=80`);
+      const panel = document.getElementById("panel-right");
+      document.getElementById("panel-doc").textContent = `SKRY · ${q}`;
+      document.getElementById("panel-meta").textContent =
+        `${r.entities.length} entities · vocab=${r.vocab_mode}`;
+      let body = "";
+      for (const e of r.entities) {
+        body += `• ${e.name}  (${e.kind || ''}) — ${e.count}× across ${e.n_docs} docs · score ${e.score}\n`;
+      }
+      body += `\nEvidence chunks: ${r.evidence_chunk_ids.slice(0, 10).join(", ")}`;
+      document.getElementById("panel-text").textContent = body;
+      panel.classList.add("open");
+      // Highlight any matching entity nodes if in ENTITIES level
+      if (level === "entity") {
+        const names = new Set(r.entities.map(e => e.name.toLowerCase()));
+        highlightNodes = new Set(rawData.nodes.filter(n => names.has((n.name||'').toLowerCase())).map(n => n.id));
+        Graph && Graph.refresh();
+      }
+    } catch (e) { console.error("skry failed", e); }
+    return;
+  }
+  const hyde = document.getElementById("hyde").checked ? 1 : 0;
+  try {
+    const r = await api(`/api/search?q=${encodeURIComponent(q)}&hyde=${hyde}&k=15`);
+    highlightNodes = new Set(r.hits.map(h => h.id));
+    Graph && Graph.refresh();
+    const hitNodes = rawData.nodes.filter(n => highlightNodes.has(n.id));
+    if (hitNodes.length) {
+      const cx = hitNodes.reduce((s,n)=>s+n.x,0)/hitNodes.length;
+      const cy = hitNodes.reduce((s,n)=>s+n.y,0)/hitNodes.length;
+      const cz = hitNodes.reduce((s,n)=>s+n.z,0)/hitNodes.length;
+      Graph.cameraPosition({ x: cx*1.6, y: cy*1.6, z: cz*1.6 + 120 },
+                           { x: cx, y: cy, z: cz }, 1200);
+    }
+  } catch (e) {
+    console.error("search failed", e);
+  }
+}
+
+async function loadClusterNames() {
+  document.getElementById("btn-cluster-names").textContent = "NAMING…";
+  try {
+    const r = await api("/api/cluster-names");
+    clusterNames = r.names || {};
+    renderLegend();
+    rebuildClusterLabels();
+    document.getElementById("btn-cluster-names").textContent = "NAMES ✓";
+  } catch {
+    document.getElementById("btn-cluster-names").textContent = "NAMING FAILED";
+  }
+}
+
+let clusterLabelObjs = [];
+function rebuildClusterLabels() {
+  if (!Graph) return;
+  const scene = Graph.scene();
+  clusterLabelObjs.forEach(o => scene.remove(o));
+  clusterLabelObjs = [];
+  if (colorBy !== "cluster" || level !== "chunk" || !rawData.clusters) return;
+  for (const cl of rawData.clusters) {
+    if (hiddenIds.has(cl.id)) continue;
+    const name = clusterNames && clusterNames[cl.id] ? clusterNames[cl.id] : `Cluster ${cl.id}`;
+    const s = new SpriteText(name);
+    s.color = "#ffffff"; s.backgroundColor = "rgba(10,14,30,0.7)";
+    s.padding = 4; s.borderRadius = 4; s.textHeight = 6;
+    s.position.set(cl.centroid[0], cl.centroid[1] + 12, cl.centroid[2]);
+    scene.add(s);
+    clusterLabelObjs.push(s);
+  }
+}
+
+async function waitForChunkGraphBuild() {
+  // Show "opening the bridge" loader with live progress.
+  const loading = document.getElementById("loading");
+  const ghost = loading.querySelector(".ghost");
+  loading.style.display = "flex";
+  for (;;) {
+    let st;
+    try { st = await api("/api/graph/build-status"); }
+    catch (e) { ghost.textContent = "build-status unreachable: " + e.message; ghost.style.color = "#ff6b6b"; throw e; }
+    if (st.cache_exists && !st.running) return;
+    if (st.error) { ghost.textContent = "build failed: " + st.error; ghost.style.color = "#ff6b6b"; throw new Error(st.error); }
+    const pct = Math.round((st.progress || 0) * 100);
+    ghost.textContent = `weaving the bridge · ${st.stage || 'queued'} · ${pct}%`;
+    ghost.style.color = "#8b93b8";
+    await new Promise(r => setTimeout(r, 1500));
+  }
+}
+
+async function loadGraph() {
+  const loading = document.getElementById("loading");
+  loading.style.display = "flex";
+  const ghost = loading.querySelector(".ghost");
+  ghost.textContent = "opening the bridge…";
+  ghost.style.color = "#8b93b8";
+  const endpoint = (level === "entity") ? "/api/skein/graph" : `/api/graph?level=${level}`;
+  let data;
+  // For chunk/document levels, the server may return 202 if no cache exists yet.
+  if (level === "chunk" || level === "document") {
+    const r = await fetch(endpoint, AUTH);
+    if (r.status === 202) {
+      // Build is in progress; show progress and poll until cache ready.
+      await waitForChunkGraphBuild();
+      data = await api(endpoint);
+    } else if (!r.ok) {
+      throw new Error(endpoint + " → " + r.status);
+    } else {
+      data = await r.json();
+    }
+  } else {
+    data = await api(endpoint);
+  }
+  rawData = data;
+  renderStats(data.stats);
+  renderLegend();
+  if (!Graph) {
+    Graph = ForceGraph3D()(document.getElementById("graph"))
+      .backgroundColor("#05060d")
+      .nodeRelSize(level === "document" ? 6 : 4)
+      .nodeOpacity(0.95)
+      .nodeColor(colorOf)
+      .nodeVal(n => highlightNodes.has(n.id) ? 6 : (n.size_chunks ? Math.log2(n.size_chunks+1)*3 : 1))
+      .nodeLabel(n => {
+        if (level === "entity") {
+          return `<div style="background:rgba(10,14,30,0.92);padding:6px 8px;border-radius:6px;border:1px solid ${colorOf(n)};color:#e8ecff;max-width:280px;font-family:monospace;font-size:11px">
+            <div style="color:${colorOf(n)};font-weight:bold">${n.name}</div>
+            <div style="color:#8b93b8;font-size:10px">${n.kind} · ${n.mentions} mentions</div>
+          </div>`;
+        }
+        return `<div style="background:rgba(10,14,30,0.92);padding:6px 8px;border-radius:6px;border:1px solid ${colorOf(n)};color:#e8ecff;max-width:280px;font-family:monospace;font-size:11px">
+          <div style="color:${colorOf(n)};font-weight:bold">${n.doc_title}</div>
+          <div style="color:#8b93b8;font-size:10px">${level==='document'?(n.size_chunks||0)+' chunks':'chunk #'+n.chunk_index}</div>
+          <div style="margin-top:4px">${(n.snippet||'').replace(/</g,"&lt;")}</div>
+        </div>`;
+      })
+      .linkColor(l => {
+        const key = `${Math.min(l.source.id??l.source,l.target.id??l.target)}-${Math.max(l.source.id??l.source,l.target.id??l.target)}`;
+        if (pathLinks.has(key)) return "#7df9ff";
+        return "rgba(125, 249, 255, 0.22)";
+      })
+      .linkWidth(l => {
+        const key = `${Math.min(l.source.id??l.source,l.target.id??l.target)}-${Math.max(l.source.id??l.source,l.target.id??l.target)}`;
+        if (pathLinks.has(key)) return 3;
+        return Math.max(0.4, (l.sim - 0.5) * 4);
+      })
+      .linkOpacity(0.7)
+      .onNodeClick((node, event) => {
+        if (event.shiftKey) { pickForPath(node); return; }
+        const dist = 80;
+        const r = Math.hypot(node.x, node.y, node.z) || 1;
+        const distRatio = 1 + dist / r;
+        Graph.cameraPosition(
+          { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio }, node, 1200);
+        openPanel(node);
+      })
+      .onLinkHover((link, prev) => {
+        const tip = document.getElementById("edge-tooltip");
+        if (!link) { tip.style.display = "none"; return; }
+        if (link.predicate) {
+          tip.textContent = `[${link.predicate}]  sim ${link.sim}`;
+          tip.style.display = "block";
+          return;
+        }
+        if (link.shared && link.shared.length) {
+          tip.textContent = `sim ${link.sim} · shared: ${link.shared.join(", ")}`;
+          tip.style.display = "block";
+          return;
+        }
+        tip.style.display = "none";
+      });
+    document.addEventListener("mousemove", e => {
+      const tip = document.getElementById("edge-tooltip");
+      tip.style.left = (e.clientX + 12) + "px";
+      tip.style.top  = (e.clientY + 12) + "px";
+    });
+    Graph.d3Force("charge").strength(-30);
+  }
+  Graph.nodeRelSize(level === "document" ? 6 : 4);
+  data.nodes.forEach(n => { n.fx = undefined; n.fy = undefined; n.fz = undefined; });
+  applyData();
+  rebuildClusterLabels();
+  document.getElementById("loading").style.display = "none";
+}
+
+async function refresh() {
+  document.getElementById("loading").style.display = "flex";
+  const ghost = document.getElementById("loading").querySelector(".ghost");
+  ghost.textContent = "kicking off rebuild…";
+  ghost.style.color = "#8b93b8";
+  await api("/api/graph/build?force=true", { method: "POST" });
+  clusterNames = null;
+  await waitForChunkGraphBuild();
+  await loadGraph();
+}
+
+// ── toast helpers ────────────────────────────────────────────────────────
+function toast({head, body, kind = "live", url = null, sticky = false, replaceId = null}) {
+  const tray = document.getElementById("toasts");
+  let el;
+  if (replaceId) el = document.getElementById("toast-" + replaceId);
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "toast " + kind;
+    if (replaceId) el.id = "toast-" + replaceId;
+    tray.appendChild(el);
+  } else {
+    el.className = "toast " + kind;
+  }
+  el.innerHTML = `<button class="x" onclick="this.parentElement.remove()">×</button>
+    <div class="head">${head}</div>
+    <div>${body}</div>
+    ${url ? `<div class="url">${url}</div>` : ""}`;
+  if (!sticky) setTimeout(() => { if (el.parentElement) el.remove(); }, 8000);
+  return el;
+}
+
+// ── URL ingest ───────────────────────────────────────────────────────────
+async function pollIngestJob(jobId, url) {
+  const start = Date.now();
+  for (let i = 0; i < 600; i++) {  // up to ~15 min
+    let s;
+    try { s = await api("/api/ingest/jobs/" + jobId); }
+    catch (e) { toast({head: "INGEST", body: "status check failed: " + e.message, kind: "err", url, replaceId: jobId}); return; }
+    const sec = Math.round((Date.now() - start) / 1000);
+    if (s.status === "ok") {
+      const lastLine = (s.log_tail.split("\n").filter(l => l.trim()).pop() || "").slice(0, 120);
+      toast({head: "INGEST · OK · " + sec + "s", body: lastLine, kind: "ok", url, replaceId: jobId});
+      return;
+    }
+    if (s.status === "failed") {
+      const errLine = (s.log_tail.split("\n").filter(l => l.toLowerCase().includes("error") || l.match(/^[A-Z][a-zA-Z]+Error/) ).pop()
+                    || s.log_tail.split("\n").filter(l => l.trim()).pop()
+                    || "see logs for details").slice(0, 200);
+      toast({head: "INGEST · FAILED · exit " + s.returncode, body: errLine, kind: "err", url, sticky: true, replaceId: jobId});
+      return;
+    }
+    toast({head: "INGEST · " + sec + "s", body: "fetching + chunking + embedding…", kind: "live", url, sticky: true, replaceId: jobId});
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  toast({head: "INGEST · TIMEOUT", body: "still running after 15 min", kind: "err", url, sticky: true, replaceId: jobId});
+}
+
+async function submitIngest() {
+  const input = document.getElementById("ingest-url");
+  const btn = document.getElementById("ingest-btn");
+  const url = input.value.trim();
+  if (!url) return;
+  if (!/^https?:\/\//.test(url)) {
+    toast({head: "INGEST", body: "url must start with http:// or https://", kind: "err"});
+    return;
+  }
+  btn.disabled = true;
+  try {
+    const r = await api("/api/ingest/url", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({url}),
+    });
+    input.value = "";
+    toast({head: "INGEST · QUEUED", body: "fetching + embedding in background…", kind: "live", url, sticky: true, replaceId: r.job_id});
+    pollIngestJob(r.job_id, url);
+  } catch (e) {
+    toast({head: "INGEST", body: e.message, kind: "err", url});
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function _gpuClass(value, thresholds) {
+  // thresholds: [warmAt, hotAt]
+  if (value >= thresholds[1]) return "hot";
+  if (value >= thresholds[0]) return "warm";
+  return "ok";
+}
+
+async function pollGPU() {
+  let r;
+  try { r = await api("/api/gpu"); } catch { return; }
+  const el = document.getElementById("gpu");
+  if (!r.available || !r.gpus || !r.gpus.length) { el.style.display = "none"; return; }
+  el.style.display = "block";
+  const g = r.gpus[0];
+  document.getElementById("gpu-name").textContent = g.name || "gpu";
+  if (g.util_pct != null) {
+    document.getElementById("gpu-util").textContent = g.util_pct + "%";
+    const bar = document.getElementById("gpu-util-bar");
+    bar.style.width = g.util_pct + "%";
+    bar.className = _gpuClass(g.util_pct, [50, 85]);
+  }
+  if (g.mem_used_mb != null && g.mem_total_mb) {
+    const usedGB = (g.mem_used_mb/1024).toFixed(1);
+    const totalGB = (g.mem_total_mb/1024).toFixed(1);
+    document.getElementById("gpu-mem").textContent = `${usedGB} / ${totalGB} GB`;
+    const pct = 100 * g.mem_used_mb / g.mem_total_mb;
+    const bar = document.getElementById("gpu-mem-bar");
+    bar.style.width = pct + "%";
+    bar.className = _gpuClass(pct, [70, 90]);
+  }
+  if (g.temp_c != null) {
+    const t = document.getElementById("gpu-temp");
+    t.textContent = g.temp_c + " °C";
+    t.style.color = g.temp_c >= 80 ? "#ff6b6b" : (g.temp_c >= 65 ? "#ffea00" : "var(--fg)");
+  }
+  if (g.power_w != null) {
+    const limit = g.power_limit_w ? ` / ${g.power_limit_w.toFixed(0)}W` : "";
+    document.getElementById("gpu-power").textContent = `${g.power_w.toFixed(0)}W${limit}`;
+  }
+}
+
+async function pollSkein() {
+  try {
+    const s = await api("/api/skein/status");
+    const el = document.getElementById("skein-status");
+    const bar = document.getElementById("skein-bar");
+    const btn = document.getElementById("btn-skein-build");
+    if (s.running) {
+      el.innerHTML = `<span style="color:#7df9ff">weaving…</span> · last: <b>${s.n_entities}</b> e / <b>${s.n_relations}</b> r`;
+      bar.style.width = "100%";
+      bar.style.animation = "shimmer 1.2s linear infinite";
+      btn.disabled = true; btn.textContent = "WEAVING…";
+    } else if (!s.built) {
+      el.textContent = "not built";
+      bar.style.width = "0%";
+      btn.disabled = false; btn.textContent = "↻ BUILD SKEIN";
+    } else {
+      el.innerHTML = `<b>${s.n_entities}</b> entities · <b>${s.n_relations}</b> relations`;
+      bar.style.width = "100%";
+      bar.style.animation = "";
+      btn.disabled = false; btn.textContent = "↻ REBUILD SKEIN";
+    }
+  } catch {}
+}
+async function buildSkein() {
+  const btn = document.getElementById("btn-skein-build");
+  btn.disabled = true; btn.textContent = "STARTING…";
+  try {
+    const r = await api("/api/skein/build", { method: "POST" });
+    if (!r.ok) { btn.textContent = r.reason || "ERROR"; setTimeout(() => btn.disabled = false, 2000); return; }
+    pollSkein();
+  } catch (e) {
+    btn.textContent = "ERROR"; setTimeout(() => { btn.disabled = false; btn.textContent = "↻ BUILD SKEIN"; }, 2000);
+  }
+}
+
+// ── wire UI ──────────────────────────────────────────────────────────────
+document.querySelectorAll(".toggle[data-level]").forEach(b => {
+  b.addEventListener("click", async () => {
+    document.querySelectorAll(".toggle[data-level]").forEach(x => x.classList.remove("on"));
+    b.classList.add("on");
+    level = b.dataset.level;
+    hiddenIds.clear(); clearPath();
+    await loadGraph();
+  });
+});
+document.querySelectorAll(".toggle[data-colorby]").forEach(b => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll(".toggle[data-colorby]").forEach(x => x.classList.remove("on"));
+    b.classList.add("on");
+    colorBy = b.dataset.colorby;
+    hiddenIds.clear();
+    renderLegend();
+    rebuildClusterLabels();
+    applyData();
+    Graph && Graph.refresh();
+  });
+});
+document.getElementById("btn-cluster-names").addEventListener("click", loadClusterNames);
+document.getElementById("btn-skein-build").addEventListener("click", buildSkein);
+document.getElementById("ingest-btn").addEventListener("click", submitIngest);
+document.getElementById("ingest-url").addEventListener("keydown", e => {
+  if (e.key === "Enter") submitIngest();
+});
+document.getElementById("q").addEventListener("keydown", e => {
+  if (e.key === "Enter") runSearch();
+  else if (e.key === "Escape") { e.target.value = ""; highlightNodes.clear(); Graph && Graph.refresh(); }
+});
+
+if (!TOKEN) {
+  document.getElementById("loading").innerHTML =
+    '<div class="ghost" style="color:#ff6b6b">missing ?token=… in URL</div>';
+} else {
+  loadGraph().catch(err => {
+    document.getElementById("loading").innerHTML =
+      '<div class="ghost" style="color:#ff6b6b">' + err.message + '</div>';
+  });
+  pollSkein();
+  setInterval(pollSkein, 5000);
+  pollGPU();
+  setInterval(pollGPU, 2000);
+}
+</script>
+</body>
+</html>

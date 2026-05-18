@@ -1,0 +1,22 @@
+[Unit]
+Description=Bifröst — 3D knowledge-graph viewer for the local pgvector DB
+Documentation=https://github.com/hrabanazviking/bifrost-viewer
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/ai/ingest-viewer
+Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=%h/.local/bin/uv run %h/ai/ingest-viewer/viewer.py
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=15
+# Memory ceiling so a runaway UMAP can't take down the system
+MemoryMax=12G
+# Don't multiply restarts in a crash loop
+StartLimitIntervalSec=120
+StartLimitBurst=4
+
+[Install]
+WantedBy=default.target

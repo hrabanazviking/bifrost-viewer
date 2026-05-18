@@ -72,6 +72,10 @@ TOKEN = os.environ["VIEWER_TOKEN"]
 EDGE_TOP_K = int(os.environ.get("VIEWER_EDGE_TOP_K", "4"))
 EDGE_MIN_SIM = float(os.environ.get("VIEWER_EDGE_MIN_SIM", "0.55"))
 HDBSCAN_MIN_CLUSTER = int(os.environ.get("VIEWER_HDBSCAN_MIN_CLUSTER", "8"))
+# Above this chunk count, cluster a random subsample and propagate labels by
+# 1-NN cosine. Full HDBSCAN on >20k chunks takes 30+ min on one core.
+HDBSCAN_SUBSAMPLE_ABOVE = int(os.environ.get("VIEWER_HDBSCAN_SUBSAMPLE_ABOVE", "12000"))
+HDBSCAN_SUBSAMPLE_SIZE = int(os.environ.get("VIEWER_HDBSCAN_SUBSAMPLE_SIZE", "6000"))
 EDGE_LABEL_TERMS = int(os.environ.get("VIEWER_EDGE_LABEL_TERMS", "4"))
 OLLAMA_URL = os.environ["VIEWER_OLLAMA_URL"]
 EMBED_MODEL = os.environ["VIEWER_EMBED_MODEL"]
@@ -264,18 +268,42 @@ def build_graph(fp: str, progress=None) -> dict:
     scale = 200.0 / max(1e-6, np.abs(coords).max())
     coords = coords * scale
 
-    step("HDBSCAN clustering", 0.55)
     cluster_ids = np.full(n, -1, dtype=int)
     if n >= max(HDBSCAN_MIN_CLUSTER * 2, 10):
-        clusterer = hdbscan.HDBSCAN(
-            min_cluster_size=HDBSCAN_MIN_CLUSTER,
-            min_samples=max(2, HDBSCAN_MIN_CLUSTER // 4),
-            metric="euclidean", cluster_selection_method="eom",
-        )
-        try:
-            cluster_ids = clusterer.fit_predict(unit)
-        except Exception as e:
-            log.warning("HDBSCAN failed: %s — proceeding without clusters", e)
+        if n > HDBSCAN_SUBSAMPLE_ABOVE:
+            # Cluster a random subsample, then propagate to the rest by 1-NN cosine.
+            # O(S²) for the subsample (S ≈ 6000 → ~40 M pairs, runs in ~30s)
+            # + O((N-S) × S) for label propagation. Much friendlier than O(N²).
+            step(f"HDBSCAN clustering · subsample {HDBSCAN_SUBSAMPLE_SIZE}/{n}", 0.55)
+            rng = np.random.default_rng(42)
+            sample_idx = rng.choice(n, size=HDBSCAN_SUBSAMPLE_SIZE, replace=False)
+            sample_idx.sort()
+            sample_unit = unit[sample_idx]
+            try:
+                clusterer = hdbscan.HDBSCAN(
+                    min_cluster_size=HDBSCAN_MIN_CLUSTER,
+                    min_samples=max(2, HDBSCAN_MIN_CLUSTER // 4),
+                    metric="euclidean", cluster_selection_method="eom",
+                )
+                sample_labels = clusterer.fit_predict(sample_unit)
+                step("propagating cluster labels via 1-NN cosine", 0.66)
+                # nearest-sample label for every chunk (including the sampled ones)
+                sim_to_samples = unit @ sample_unit.T  # (N, S)
+                nearest = np.argmax(sim_to_samples, axis=1)
+                cluster_ids = sample_labels[nearest].astype(int)
+            except Exception as e:
+                log.warning("subsampled HDBSCAN failed: %s — proceeding without clusters", e)
+        else:
+            step("HDBSCAN clustering", 0.55)
+            try:
+                clusterer = hdbscan.HDBSCAN(
+                    min_cluster_size=HDBSCAN_MIN_CLUSTER,
+                    min_samples=max(2, HDBSCAN_MIN_CLUSTER // 4),
+                    metric="euclidean", cluster_selection_method="eom",
+                )
+                cluster_ids = clusterer.fit_predict(unit)
+            except Exception as e:
+                log.warning("HDBSCAN failed: %s — proceeding without clusters", e)
 
     step("computing edge labels (tf-idf)", 0.72)
     try:

@@ -18,6 +18,10 @@ GET  /api/skein/status              Skein KG build state + counts
 POST /api/skein/build               kick off Skein build in background
 GET  /api/skein/graph               entity graph (UMAP-projected) for 3D rendering
 GET  /api/skry?q=…                  query-time entity neighborhood
+POST /api/ingest/url                start a URL ingest job (subprocess to ../ingest/)
+GET  /api/ingest/jobs               list all URL ingest jobs known this session
+GET  /api/ingest/jobs/{id}          status of a specific URL ingest job
+GET  /api/gpu                       nvidia-smi snapshot (cached 1.5 s)
 GET  /api/kg/status                 legacy llama-per-chunk batch progress (kept for comparison)
 POST /api/refresh                   invalidate caches; equivalent to POST /api/graph/build
 
@@ -59,6 +63,14 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pgvector.psycopg import register_vector
 from psycopg_pool import ConnectionPool
+from pydantic import BaseModel
+
+
+# ─── request models ─────────────────────────────────────────────────────────
+
+class IngestUrlRequest(BaseModel):
+    """POST body for /api/ingest/url. See docs/bugs/0009 for why this exists."""
+    url: str
 
 # ─── config ─────────────────────────────────────────────────────────────────
 
@@ -481,11 +493,14 @@ def kick_off_build(force: bool = False) -> bool:
                     pass
         log_path = LOG_DIR / f"graph_build_{int(time.time())}.log"
         log_file = open(log_path, "w")
-        proc = subprocess.Popen(
-            ["uv", "run", str(PROJECT / "graph_builder.py"), fp],
-            cwd=str(PROJECT),
-            stdout=log_file, stderr=subprocess.STDOUT,
-        )
+        try:
+            proc = subprocess.Popen(
+                ["uv", "run", str(PROJECT / "graph_builder.py"), fp],
+                cwd=str(PROJECT),
+                stdout=log_file, stderr=subprocess.STDOUT,
+            )
+        finally:
+            log_file.close()   # parent's dup; subprocess has its own — see docs/bugs/0007
         _build_proc.update({
             "proc": proc, "fp": fp,
             "started_at": datetime.datetime.now().isoformat(),
@@ -769,6 +784,7 @@ def path(a: int, b: int, _=Depends(require_token)):
 
 SKEIN_DIR = PROJECT.parent / "skein-kg"
 _skein_build_proc = {"proc": None, "started_at": None, "log_path": None}
+_skein_build_proc_lock = threading.Lock()   # see docs/bugs/0002-skein-build-race.md
 
 
 def _skein_tables_exist(cur) -> bool:
@@ -782,8 +798,9 @@ def _skein_tables_exist(cur) -> bool:
 @app.get("/api/skein/status")
 @safely("skein_status")
 def skein_status(_=Depends(require_token)):
-    p = _skein_build_proc["proc"]
-    running = p is not None and p.poll() is None
+    with _skein_build_proc_lock:
+        p = _skein_build_proc["proc"]
+        running = p is not None and p.poll() is None
     with db_conn() as conn, conn.cursor() as cur:
         if not _skein_tables_exist(cur):
             return orj({"built": False, "running": running, "n_entities": 0, "n_relations": 0})
@@ -803,21 +820,23 @@ def skein_status(_=Depends(require_token)):
 @safely("skein_build")
 def skein_build(_=Depends(require_token)):
     import subprocess
-    p = _skein_build_proc["proc"]
-    if p is not None and p.poll() is None:
-        return orj({"ok": False, "reason": "already running",
-                    "started_at": _skein_build_proc["started_at"]})
     log_path = LOG_DIR / f"skein_build_{int(time.time())}.log"
-    log_file = open(log_path, "w")
-    new = subprocess.Popen(
-        ["uv", "run", "skein", "build"],
-        cwd=str(SKEIN_DIR),
-        stdout=log_file, stderr=subprocess.STDOUT,
-    )
-    _skein_build_proc.update({
-        "proc": new, "started_at": datetime.datetime.now().isoformat(),
-        "log_path": str(log_path),
-    })
+    with _skein_build_proc_lock:
+        p = _skein_build_proc["proc"]
+        if p is not None and p.poll() is None:
+            return orj({"ok": False, "reason": "already running",
+                        "started_at": _skein_build_proc["started_at"]})
+        log_file = open(log_path, "w")
+        new = subprocess.Popen(
+            ["uv", "run", "skein", "build"],
+            cwd=str(SKEIN_DIR),
+            stdout=log_file, stderr=subprocess.STDOUT,
+        )
+        log_file.close()   # parent's dup; subprocess has its own — see docs/bugs/0007
+        _skein_build_proc.update({
+            "proc": new, "started_at": datetime.datetime.now().isoformat(),
+            "log_path": str(log_path),
+        })
     for old in CACHE_DIR.glob("skein_graph_*.json"):
         try:
             old.unlink()
@@ -898,9 +917,13 @@ def skein_graph(_=Depends(require_token)):
 @safely("skry")
 def skry_lookup(q: str, top_chunks: int = 60, top_entities: int = 20,
                 _=Depends(require_token)):
+    """Live entity-neighborhood projection via the skry-kg library.
+    See docs/bugs/0010 for the query-length bound rationale."""
     from skry import skry as _skry
     if not q or not q.strip():
         raise HTTPException(status_code=400, detail="empty query")
+    if len(q) > 10000:
+        raise HTTPException(status_code=400, detail="query too long (max 10000 chars)")
     if top_chunks < 1 or top_chunks > 500 or top_entities < 1 or top_entities > 200:
         raise HTTPException(status_code=400, detail="top_chunks and top_entities out of bounds")
     result = _skry(DB_URL, ollama_url=OLLAMA_URL, embed_model=EMBED_MODEL,
@@ -939,22 +962,29 @@ def _ingest_job_state(job_id: str) -> dict | None:
 
 @app.post("/api/ingest/url")
 @safely("ingest_url")
-def ingest_url(payload: dict, _=Depends(require_token)):
+def ingest_url(payload: IngestUrlRequest, _=Depends(require_token)):
+    """Spawn an ingest subprocess for one URL. See docs/bugs/0009 (Pydantic
+    model added), docs/bugs/0007 (log handle leak fixed)."""
     import subprocess, uuid
-    url = (payload.get("url") or "").strip()
+    url = payload.url.strip()
     if not url:
         raise HTTPException(status_code=400, detail="missing 'url'")
     if not (url.startswith("http://") or url.startswith("https://")):
         raise HTTPException(status_code=400, detail="url must start with http:// or https://")
+    if len(url) > 4096:
+        raise HTTPException(status_code=400, detail="url too long (max 4096 chars)")
     if not INGEST_DIR.exists():
         raise HTTPException(status_code=500, detail=f"ingest project not found at {INGEST_DIR}")
     job_id = uuid.uuid4().hex[:12]
     log_path = LOG_DIR / f"ingest_{job_id}.log"
     log_file = open(log_path, "w")
-    proc = subprocess.Popen(
-        ["uv", "run", "ingest.py", "add", url],
-        cwd=str(INGEST_DIR), stdout=log_file, stderr=subprocess.STDOUT,
-    )
+    try:
+        proc = subprocess.Popen(
+            ["uv", "run", "ingest.py", "add", url],
+            cwd=str(INGEST_DIR), stdout=log_file, stderr=subprocess.STDOUT,
+        )
+    finally:
+        log_file.close()   # parent's dup; subprocess has its own
     with _ingest_lock:
         _ingest_jobs[job_id] = {
             "proc": proc, "url": url,
@@ -977,24 +1007,37 @@ def ingest_job_status(job_id: str, _=Depends(require_token)):
 @app.get("/api/ingest/jobs")
 @safely("ingest_jobs_list")
 def ingest_jobs_list(_=Depends(require_token)):
+    """All ingest jobs spawned this session. See docs/bugs/0003 for the
+    lock-discipline reasoning behind iterating inside the lock."""
     with _ingest_lock:
         ids = list(_ingest_jobs.keys())
-    return orj([_ingest_job_state(i) for i in ids if _ingest_job_state(i)])
+    # _ingest_job_state acquires the lock itself; the worst case of an entry
+    # being evicted between the snapshot above and the per-id call is a None
+    # we filter out — currently we never evict, but the pattern is safe.
+    return orj([s for s in (_ingest_job_state(i) for i in ids) if s])
 
 
 # ─── GPU gauge ──────────────────────────────────────────────────────────────
 
 _gpu_cache: dict = {"at": 0.0, "data": None}
+_gpu_cache_lock = threading.Lock()   # see docs/bugs/0001-gpu-cache-race.md
 
 
 @app.get("/api/gpu")
 @safely("gpu")
 def gpu(_=Depends(require_token)):
-    """nvidia-smi snapshot. Cached for 1.5s to avoid hammering it."""
+    """nvidia-smi snapshot. Cached for 1.5s to avoid hammering it.
+
+    Lock discipline: the cache read and the cache write are each performed
+    inside `_gpu_cache_lock`. The lock is NOT held across the subprocess
+    call — we accept that two near-simultaneous misses may both run
+    nvidia-smi once, which is far better than holding the lock for 3 s.
+    """
     import subprocess
     now = time.time()
-    if _gpu_cache["data"] is not None and (now - _gpu_cache["at"]) < 1.5:
-        return orj(_gpu_cache["data"])
+    with _gpu_cache_lock:
+        if _gpu_cache["data"] is not None and (now - _gpu_cache["at"]) < 1.5:
+            return orj(_gpu_cache["data"])
     try:
         r = subprocess.run(
             ["nvidia-smi",
@@ -1028,8 +1071,9 @@ def gpu(_=Depends(require_token)):
         payload = {"available": False, "reason": "nvidia-smi not installed"}
     except subprocess.TimeoutExpired:
         payload = {"available": False, "reason": "nvidia-smi timed out"}
-    _gpu_cache["at"] = now
-    _gpu_cache["data"] = payload
+    with _gpu_cache_lock:
+        _gpu_cache["at"] = now
+        _gpu_cache["data"] = payload
     return orj(payload)
 
 
@@ -1089,5 +1133,8 @@ def _shutdown():
 
 
 if __name__ == "__main__":
-    log.info(f"Bifröst on http://{BIND_HOST}:{PORT}/?token={TOKEN}")
+    # docs/bugs/0008: never print the real token to logs. Operator can read
+    # VIEWER_TOKEN from .env if they need the URL.
+    log.info("Bifröst on http://%s:%s/?token=***  (token in VIEWER_TOKEN env var)",
+             BIND_HOST, PORT)
     uvicorn.run(app, host=BIND_HOST, port=PORT, log_level="info")

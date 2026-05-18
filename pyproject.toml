@@ -23,6 +23,9 @@ dependencies = [
     "skry-kg",
 ]
 
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
 [tool.uv.sources]
 skein-kg = { path = "../skein-kg" }
 skry-kg = { path = "../skry-kg" }

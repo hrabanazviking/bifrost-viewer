@@ -13,6 +13,7 @@ Writes two files under .cache/:
 from __future__ import annotations
 
 import datetime
+import logging
 import os
 import sys
 import traceback
@@ -25,6 +26,13 @@ sys.path.insert(0, str(PROJECT))
 
 # Import shared build logic from the viewer module
 from viewer import build_graph, cache_path, CACHE_DIR  # noqa: E402
+
+# docs/bugs/0011: structured logging via `logging` module — never `print()`.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname).1s] graph_builder: %(message)s",
+)
+log = logging.getLogger("graph_builder")
 
 
 def status_path(fp: str) -> Path:
@@ -49,7 +57,7 @@ def write_status(fp: str, **fields) -> None:
 
 def main() -> int:
     if len(sys.argv) != 2:
-        print("usage: graph_builder.py <fingerprint>", file=sys.stderr)
+        log.error("usage: graph_builder.py <fingerprint>")
         return 2
     fp = sys.argv[1]
 
@@ -82,14 +90,14 @@ def main() -> int:
         write_status(fp, running=False, stage="done", progress=1.0,
                      finished_at=datetime.datetime.now().isoformat(),
                      error=None)
-        print(f"graph build complete · fp={fp} · cache={target.name}")
+        log.info("graph build complete · fp=%s · cache=%s", fp, target.name)
         return 0
     except Exception as e:
         tb = traceback.format_exc()
         write_status(fp, running=False, stage="failed", progress=0.0,
                      finished_at=datetime.datetime.now().isoformat(),
                      error=str(e))
-        print(f"graph build FAILED · fp={fp}\n{tb}", file=sys.stderr)
+        log.error("graph build FAILED · fp=%s\n%s", fp, tb)
         return 1
 
 

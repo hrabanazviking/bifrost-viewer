@@ -24,6 +24,10 @@ same database, each with one job:
 
 ---
 
+![https://raw.githubusercontent.com/hrabanazviking/bifrost-viewer/refs/heads/main/Screenshot_20260518_173244.png](https://raw.githubusercontent.com/hrabanazviking/bifrost-viewer/refs/heads/main/Screenshot_20260518_173244.png)
+
+---
+
 ## What you get
 
 - **Chunk-level constellation** — every chunk in your corpus as a 3D node, UMAP-projected, colored by source document, edges drawn by cosine similarity, hover for snippet, click to read the full chunk text.

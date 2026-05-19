@@ -49,6 +49,7 @@ import threading
 import time
 import traceback
 from collections import defaultdict
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
@@ -88,6 +89,9 @@ HDBSCAN_MIN_CLUSTER = int(os.environ.get("VIEWER_HDBSCAN_MIN_CLUSTER", "8"))
 # 1-NN cosine. Full HDBSCAN on >20k chunks takes 30+ min on one core.
 HDBSCAN_SUBSAMPLE_ABOVE = int(os.environ.get("VIEWER_HDBSCAN_SUBSAMPLE_ABOVE", "12000"))
 HDBSCAN_SUBSAMPLE_SIZE = int(os.environ.get("VIEWER_HDBSCAN_SUBSAMPLE_SIZE", "6000"))
+# docs/bugs/0017: if the graph_builder subprocess goes this long without
+# updating its status file, treat it as stalled and kill it.
+BUILD_STALL_AFTER_SEC = int(os.environ.get("VIEWER_BUILD_STALL_AFTER_SEC", "600"))
 EDGE_LABEL_TERMS = int(os.environ.get("VIEWER_EDGE_LABEL_TERMS", "4"))
 OLLAMA_URL = os.environ["VIEWER_OLLAMA_URL"]
 EMBED_MODEL = os.environ["VIEWER_EMBED_MODEL"]
@@ -132,13 +136,48 @@ def get_pool() -> ConnectionPool:
 
 
 def db_conn():
-    """Use as: `with db_conn() as conn:` — returns pool-managed connection."""
+    """Return a pool-managed connection context manager.
+
+    Usage::
+
+        with db_conn() as conn, conn.cursor() as cur:
+            cur.execute(...)
+
+    docs/bugs/0019: the return type is `psycopg_pool.PoolConnectionContext`
+    (a context manager that yields `psycopg.Connection`). We deliberately
+    do not import the internal type into the annotation — it isn't part of
+    `psycopg_pool`'s public surface — but the contract is documented here.
+    """
     return get_pool().connection()
 
 
-# ─── app + auth ─────────────────────────────────────────────────────────────
+# ─── app + lifespan + auth ──────────────────────────────────────────────────
 
-app = FastAPI(title="Bifröst", docs_url=None, redoc_url=None)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan context manager — docs/bugs/0016 replaces the
+    deprecated @app.on_event("startup") / ("shutdown") decorators."""
+    log.info("Bifröst starting · host=%s port=%s db=%s ollama=%s",
+             BIND_HOST, PORT, DB_URL, OLLAMA_URL)
+    try:
+        get_pool()
+    except Exception as e:
+        log.warning("DB pool could not open at startup (will retry on demand): %s", e)
+    if load_cached_graph() is None:
+        log.info("no cached chunk graph for current fingerprint — queuing background build")
+        kick_off_build(force=False)
+    yield
+    # shutdown
+    global _pool
+    if _pool is not None:
+        try:
+            _pool.close()
+        except Exception as e:
+            log.warning("error closing pool: %s", e)
+    log.info("Bifröst shutting down")
+
+
+app = FastAPI(title="Bifröst", docs_url=None, redoc_url=None, lifespan=lifespan)
 
 
 def orj(payload: Any, status_code: int = 200) -> Response:
@@ -148,7 +187,17 @@ def orj(payload: Any, status_code: int = 200) -> Response:
     return Response(content=body, status_code=status_code, media_type="application/json")
 
 
-def require_token(request: Request, token: str | None = Query(default=None)):
+def require_token(request: Request, token: str | None = Query(default=None)) -> None:
+    """FastAPI dependency: guard endpoints with the shared bearer token.
+
+    Accepts the token via ``?token=…`` query param OR an
+    ``Authorization: Bearer …`` header. Comparison uses
+    `secrets.compare_digest` (constant-time, per Law of Token Discipline).
+
+    Raises ``HTTPException(401)`` on bad/missing token. On success returns
+    ``None`` — the function's value is intentionally not used by callers
+    (docs/bugs/0018 made this explicit).
+    """
     supplied = token
     if not supplied:
         auth = request.headers.get("authorization", "")
@@ -156,6 +205,7 @@ def require_token(request: Request, token: str | None = Query(default=None)):
             supplied = auth[7:].strip()
     if not supplied or not secrets.compare_digest(supplied, TOKEN):
         raise HTTPException(status_code=401, detail="bad or missing token")
+    return None
 
 
 def safely(name: str):
@@ -229,21 +279,14 @@ def cache_path(fp: str) -> Path:
     return CACHE_DIR / f"graph_{fp}.json"
 
 
-def build_graph(fp: str, progress=None) -> dict:
-    """Compute chunk-level + doc-level graphs in one pass. `progress` is
-    called with a (stage_name, fraction) tuple at each major checkpoint."""
-    import umap
-    import hdbscan
+# ─── build_graph: phase helpers (each one ≤ 50 lines, per ME Iron Law) ─────
+# docs/bugs/0013: the orchestrator below delegates to these single-purpose
+# functions so build_graph itself stays small and each phase can be tested
+# or replaced in isolation.
 
-    def step(name, frac):
-        if progress:
-            try:
-                progress(name, frac)
-            except Exception:
-                pass
-        log.info("graph build · %s (%.0f%%)", name, frac * 100)
-
-    step("loading chunks from db", 0.02)
+def _load_chunk_rows() -> list[tuple]:
+    """Pull every chunk + its embedding + its document metadata. The single
+    DB call for the whole build."""
     with db_conn() as conn, conn.cursor() as cur:
         cur.execute(
             """
@@ -253,104 +296,125 @@ def build_graph(fp: str, progress=None) -> dict:
             ORDER BY c.id
             """
         )
-        rows = cur.fetchall()
+        return cur.fetchall()
 
-    if not rows:
-        empty = {"fingerprint": fp, "nodes": [], "links": [], "documents": [],
-                 "clusters": [], "stats": {"n_chunks": 0, "n_docs": 0, "n_edges": 0,
-                 "n_clusters": 0, "edge_top_k": EDGE_TOP_K, "edge_min_sim": EDGE_MIN_SIM}}
-        return {"chunk": empty, "document": empty}
 
-    ids = [r[0] for r in rows]
-    doc_ids = [r[1] for r in rows]
-    texts = [r[3] for r in rows]
-    embeddings = np.array([r[4] for r in rows], dtype=np.float32)
-
+def _normalize_unit(embeddings: np.ndarray) -> np.ndarray:
+    """L2-normalize each row of `embeddings` so dot product == cosine sim."""
     norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
-    unit = embeddings / norms
-    n = len(rows)
+    return embeddings / norms
 
-    step(f"UMAP projection ({n} chunks)", 0.08)
+
+def _project_umap_3d(embeddings: np.ndarray, n: int) -> np.ndarray:
+    """3-D UMAP projection rescaled to fit a 200-unit viewer box."""
+    import umap
     n_neighbors = max(2, min(15, n - 1))
     reducer = umap.UMAP(n_components=3, n_neighbors=n_neighbors, metric="cosine",
                        min_dist=0.1, random_state=42)
     coords = reducer.fit_transform(embeddings)
     coords = coords - coords.mean(axis=0)
     scale = 200.0 / max(1e-6, np.abs(coords).max())
-    coords = coords * scale
+    return coords * scale
 
+
+def _cluster_subsampled(unit: np.ndarray, n: int, step) -> np.ndarray:
+    """HDBSCAN on a deterministic random subsample, then 1-NN label propagation
+    to all chunks. Used when n > HDBSCAN_SUBSAMPLE_ABOVE — full HDBSCAN is
+    O(N²) and intolerably slow on >15k vectors. See docs/bugs (graph stall)."""
+    import hdbscan
+    step(f"HDBSCAN clustering · subsample {HDBSCAN_SUBSAMPLE_SIZE}/{n}", 0.55)
+    rng = np.random.default_rng(42)
+    sample_idx = rng.choice(n, size=HDBSCAN_SUBSAMPLE_SIZE, replace=False)
+    sample_idx.sort()
+    sample_unit = unit[sample_idx]
+    clusterer = hdbscan.HDBSCAN(
+        min_cluster_size=HDBSCAN_MIN_CLUSTER,
+        min_samples=max(2, HDBSCAN_MIN_CLUSTER // 4),
+        metric="euclidean", cluster_selection_method="eom",
+    )
+    sample_labels = clusterer.fit_predict(sample_unit)
+    step("propagating cluster labels via 1-NN cosine", 0.66)
+    sim_to_samples = unit @ sample_unit.T   # (N, S)
+    nearest = np.argmax(sim_to_samples, axis=1)
+    return sample_labels[nearest].astype(int)
+
+
+def _cluster_full(unit: np.ndarray) -> np.ndarray:
+    """Full HDBSCAN on all chunks (used when n ≤ HDBSCAN_SUBSAMPLE_ABOVE)."""
+    import hdbscan
+    clusterer = hdbscan.HDBSCAN(
+        min_cluster_size=HDBSCAN_MIN_CLUSTER,
+        min_samples=max(2, HDBSCAN_MIN_CLUSTER // 4),
+        metric="euclidean", cluster_selection_method="eom",
+    )
+    return clusterer.fit_predict(unit)
+
+
+def _cluster_chunks(unit: np.ndarray, n: int, step) -> np.ndarray:
+    """Dispatch to subsampled or full HDBSCAN; degrades to all-noise on
+    exception (per Law of Fault Tolerance — clusters are an enrichment,
+    their absence does not break the rest of the graph)."""
     cluster_ids = np.full(n, -1, dtype=int)
-    if n >= max(HDBSCAN_MIN_CLUSTER * 2, 10):
-        if n > HDBSCAN_SUBSAMPLE_ABOVE:
-            # Cluster a random subsample, then propagate to the rest by 1-NN cosine.
-            # O(S²) for the subsample (S ≈ 6000 → ~40 M pairs, runs in ~30s)
-            # + O((N-S) × S) for label propagation. Much friendlier than O(N²).
-            step(f"HDBSCAN clustering · subsample {HDBSCAN_SUBSAMPLE_SIZE}/{n}", 0.55)
-            rng = np.random.default_rng(42)
-            sample_idx = rng.choice(n, size=HDBSCAN_SUBSAMPLE_SIZE, replace=False)
-            sample_idx.sort()
-            sample_unit = unit[sample_idx]
-            try:
-                clusterer = hdbscan.HDBSCAN(
-                    min_cluster_size=HDBSCAN_MIN_CLUSTER,
-                    min_samples=max(2, HDBSCAN_MIN_CLUSTER // 4),
-                    metric="euclidean", cluster_selection_method="eom",
-                )
-                sample_labels = clusterer.fit_predict(sample_unit)
-                step("propagating cluster labels via 1-NN cosine", 0.66)
-                # nearest-sample label for every chunk (including the sampled ones)
-                sim_to_samples = unit @ sample_unit.T  # (N, S)
-                nearest = np.argmax(sim_to_samples, axis=1)
-                cluster_ids = sample_labels[nearest].astype(int)
-            except Exception as e:
-                log.warning("subsampled HDBSCAN failed: %s — proceeding without clusters", e)
-        else:
-            step("HDBSCAN clustering", 0.55)
-            try:
-                clusterer = hdbscan.HDBSCAN(
-                    min_cluster_size=HDBSCAN_MIN_CLUSTER,
-                    min_samples=max(2, HDBSCAN_MIN_CLUSTER // 4),
-                    metric="euclidean", cluster_selection_method="eom",
-                )
-                cluster_ids = clusterer.fit_predict(unit)
-            except Exception as e:
-                log.warning("HDBSCAN failed: %s — proceeding without clusters", e)
-
-    step("computing edge labels (tf-idf)", 0.72)
+    if n < max(HDBSCAN_MIN_CLUSTER * 2, 10):
+        return cluster_ids
     try:
-        term_sets = chunk_top_terms(texts, top_n=12)
+        if n > HDBSCAN_SUBSAMPLE_ABOVE:
+            return _cluster_subsampled(unit, n, step)
+        step("HDBSCAN clustering", 0.55)
+        return _cluster_full(unit)
+    except Exception as e:
+        log.warning("HDBSCAN failed: %s — proceeding without clusters", e)
+        return cluster_ids
+
+
+def _compute_term_sets(texts: list[str]) -> list[set[str]]:
+    """Per-chunk top tf-idf terms. Returns empty sets on failure."""
+    try:
+        return chunk_top_terms(texts, top_n=12)
     except Exception as e:
         log.warning("tf-idf failed: %s — edges will have no shared-term labels", e)
-        term_sets = [set() for _ in texts]
+        return [set() for _ in texts]
 
-    step("computing top-K edges", 0.82)
+
+def _build_top_k_edges(
+    unit: np.ndarray, ids: list, term_sets: list[set[str]], n: int,
+) -> list[dict]:
+    """Top-K cosine edges per chunk with shared salient terms attached."""
+    if n < 2:
+        return []
     sim = unit @ unit.T
     np.fill_diagonal(sim, -1.0)
-    links: list[dict] = []
+    k = min(EDGE_TOP_K, n - 1)
+    if k <= 0:
+        return []
+    top_idx = np.argpartition(-sim, kth=k - 1, axis=1)[:, :k]
     seen: set[tuple[int, int]] = set()
-    k = min(EDGE_TOP_K, n - 1) if n > 1 else 0
-    if k > 0:
-        top_idx = np.argpartition(-sim, kth=k - 1, axis=1)[:, :k]
-        for i in range(n):
-            for j in top_idx[i]:
-                j = int(j)
-                s = float(sim[i, j])
-                if s < EDGE_MIN_SIM or i == j:
-                    continue
-                a, b = (i, j) if i < j else (j, i)
-                if (a, b) in seen:
-                    continue
-                seen.add((a, b))
-                shared = sorted(term_sets[a] & term_sets[b])[:EDGE_LABEL_TERMS] if term_sets[a] and term_sets[b] else []
-                links.append({"source": ids[a], "target": ids[b], "sim": round(s, 3),
-                              "shared": shared})
+    links: list[dict] = []
+    for i in range(n):
+        for j in top_idx[i]:
+            j = int(j)
+            s = float(sim[i, j])
+            if s < EDGE_MIN_SIM or i == j:
+                continue
+            a, b = (i, j) if i < j else (j, i)
+            if (a, b) in seen:
+                continue
+            seen.add((a, b))
+            shared = (sorted(term_sets[a] & term_sets[b])[:EDGE_LABEL_TERMS]
+                      if term_sets[a] and term_sets[b] else [])
+            links.append({"source": ids[a], "target": ids[b],
+                          "sim": round(s, 3), "shared": shared})
+    return links
 
-    doc_color = doc_palette(doc_ids)
-    cl_color = cluster_palette(cluster_ids.tolist())
-    doc_meta = {r[1]: (r[5], r[6], r[7]) for r in rows}
 
-    step("assembling payloads", 0.92)
+def _build_chunk_payload(
+    fp: str, rows: list[tuple], coords: np.ndarray,
+    cluster_ids: np.ndarray, links: list[dict],
+    doc_color: dict[int, str], cl_color: dict[int, str],
+    doc_meta: dict[int, tuple], doc_ids: list[int], ids: list, n: int,
+) -> dict:
+    """Assemble the chunk-level payload (nodes + links + clusters + stats)."""
     chunk_nodes = []
     for i, r in enumerate(rows):
         cid, did, cidx, text, _emb, title, ctype, source = r
@@ -362,13 +426,11 @@ def build_graph(fp: str, progress=None) -> dict:
             "color_doc": doc_color[did], "color_cluster": cl_color[cl],
             "x": float(coords[i, 0]), "y": float(coords[i, 1]), "z": float(coords[i, 2]),
         })
-
     documents_meta = [
         {"id": d, "title": doc_meta[d][0], "content_type": doc_meta[d][1],
          "source": doc_meta[d][2], "color": doc_color[d]}
         for d in sorted(set(doc_ids))
     ]
-
     clusters_meta: list[dict] = []
     for cl in sorted(set(cluster_ids.tolist())):
         if cl < 0:
@@ -381,8 +443,7 @@ def build_graph(fp: str, progress=None) -> dict:
             "centroid": [float(centroid[0]), float(centroid[1]), float(centroid[2])],
             "sample_chunk_ids": sample,
         })
-
-    chunk_payload = {
+    return {
         "fingerprint": fp, "nodes": chunk_nodes, "links": links,
         "documents": documents_meta, "clusters": clusters_meta,
         "stats": {"n_chunks": n, "n_docs": len(documents_meta),
@@ -390,7 +451,13 @@ def build_graph(fp: str, progress=None) -> dict:
                   "edge_top_k": EDGE_TOP_K, "edge_min_sim": EDGE_MIN_SIM},
     }
 
-    # Document-level aggregation
+
+def _build_document_payload(
+    fp: str, doc_ids: list[int], coords: np.ndarray, unit: np.ndarray,
+    doc_meta: dict[int, tuple], doc_color: dict[int, str],
+) -> dict:
+    """Aggregate one node per document at the centroid of its chunks'
+    coordinates; cross-doc edges from mean-centroid cosine similarity."""
     doc_to_idx: dict[int, list[int]] = defaultdict(list)
     for i, d in enumerate(doc_ids):
         doc_to_idx[d].append(i)
@@ -409,26 +476,92 @@ def build_graph(fp: str, progress=None) -> dict:
         })
 
     unique_docs = sorted(doc_to_idx)
-    doc_unit_centroids = {d: unit[doc_to_idx[d]].mean(axis=0) for d in unique_docs}
-    for d, v in doc_unit_centroids.items():
+    doc_centroids = {d: unit[doc_to_idx[d]].mean(axis=0) for d in unique_docs}
+    for d, v in doc_centroids.items():
         nv = np.linalg.norm(v)
         if nv > 0:
-            doc_unit_centroids[d] = v / nv
+            doc_centroids[d] = v / nv
 
     doc_links: list[dict] = []
     for i, d1 in enumerate(unique_docs):
         for d2 in unique_docs[i + 1:]:
-            s = float(doc_unit_centroids[d1] @ doc_unit_centroids[d2])
+            s = float(doc_centroids[d1] @ doc_centroids[d2])
             if s >= EDGE_MIN_SIM:
-                doc_links.append({"source": d1, "target": d2, "sim": round(s, 3), "shared": []})
+                doc_links.append({"source": d1, "target": d2,
+                                  "sim": round(s, 3), "shared": []})
 
-    doc_payload = {
+    documents_meta = [
+        {"id": d, "title": doc_meta[d][0], "content_type": doc_meta[d][1],
+         "source": doc_meta[d][2], "color": doc_color[d]}
+        for d in unique_docs
+    ]
+    return {
         "fingerprint": fp, "nodes": doc_nodes, "links": doc_links,
         "documents": documents_meta, "clusters": [],
-        "stats": {"n_chunks": n, "n_docs": len(documents_meta),
+        "stats": {"n_chunks": len(doc_ids), "n_docs": len(documents_meta),
                   "n_edges": len(doc_links), "n_clusters": 0,
                   "edge_top_k": "all-pairs", "edge_min_sim": EDGE_MIN_SIM},
     }
+
+
+def _empty_graph_payload(fp: str) -> dict:
+    """Returned when the corpus has zero chunks. Same shape, all empty."""
+    empty = {"fingerprint": fp, "nodes": [], "links": [], "documents": [],
+             "clusters": [], "stats": {"n_chunks": 0, "n_docs": 0, "n_edges": 0,
+             "n_clusters": 0, "edge_top_k": EDGE_TOP_K, "edge_min_sim": EDGE_MIN_SIM}}
+    return {"chunk": empty, "document": empty}
+
+
+def build_graph(fp: str, progress=None) -> dict:
+    """Compute chunk-level + doc-level graphs in one pass.
+
+    Orchestrator: each named phase is a helper above. `progress` is called
+    with (stage_name, fraction) at each major checkpoint so the subprocess
+    can report live state via build_status_<fp>.json.
+    """
+    def step(name: str, frac: float) -> None:
+        if progress:
+            try:
+                progress(name, frac)
+            except Exception:
+                pass
+        log.info("graph build · %s (%.0f%%)", name, frac * 100)
+
+    step("loading chunks from db", 0.02)
+    rows = _load_chunk_rows()
+    if not rows:
+        return _empty_graph_payload(fp)
+
+    ids = [r[0] for r in rows]
+    doc_ids = [r[1] for r in rows]
+    texts = [r[3] for r in rows]
+    embeddings = np.array([r[4] for r in rows], dtype=np.float32)
+    unit = _normalize_unit(embeddings)
+    n = len(rows)
+    doc_meta = {r[1]: (r[5], r[6], r[7]) for r in rows}
+
+    step(f"UMAP projection ({n} chunks)", 0.08)
+    coords = _project_umap_3d(embeddings, n)
+
+    cluster_ids = _cluster_chunks(unit, n, step)
+
+    step("computing edge labels (tf-idf)", 0.72)
+    term_sets = _compute_term_sets(texts)
+
+    step("computing top-K edges", 0.82)
+    links = _build_top_k_edges(unit, ids, term_sets, n)
+
+    doc_color = doc_palette(doc_ids)
+    cl_color = cluster_palette(cluster_ids.tolist())
+
+    step("assembling payloads", 0.92)
+    chunk_payload = _build_chunk_payload(
+        fp, rows, coords, cluster_ids, links,
+        doc_color, cl_color, doc_meta, doc_ids, ids, n,
+    )
+    doc_payload = _build_document_payload(
+        fp, doc_ids, coords, unit, doc_meta, doc_color,
+    )
 
     step("done", 1.0)
     return {"chunk": chunk_payload, "document": doc_payload}
@@ -606,6 +739,40 @@ def get_graph(level: str = "chunk", _=Depends(require_token)):
     return orj(g[level])
 
 
+def _watchdog_check(st: dict, fp: str) -> dict:
+    """docs/bugs/0017: if the build hasn't updated its status file in
+    BUILD_STALL_AFTER_SEC seconds, kill the subprocess and mark stalled."""
+    if not st.get("running"):
+        return st
+    status_file = _build_status_path(fp)
+    if not status_file.exists():
+        return st
+    age = time.time() - status_file.stat().st_mtime
+    st["status_age_seconds"] = round(age, 1)
+    if age <= BUILD_STALL_AFTER_SEC:
+        return st
+    # Stalled. Kill the subprocess (if any) and mark accordingly.
+    with _build_proc_lock:
+        p = _build_proc["proc"]
+        if p is not None and p.poll() is None and _build_proc["fp"] == fp:
+            try:
+                p.kill()
+                log.warning("graph_builder stalled (no status update for %.0fs) — killed pid=%s",
+                            age, p.pid)
+            except Exception as e:
+                log.warning("failed to kill stalled graph_builder: %s", e)
+    st["running"] = False
+    st["stage"] = "stalled"
+    st["error"] = (f"no progress update for {age:.0f}s (threshold {BUILD_STALL_AFTER_SEC}s); "
+                   "subprocess killed")
+    # Persist the stall to the status file so subsequent reads agree
+    try:
+        status_file.write_bytes(orjson.dumps(st))
+    except Exception:
+        pass
+    return st
+
+
 @app.get("/api/graph/build-status")
 @safely("graph_build_status")
 def graph_build_status(_=Depends(require_token)):
@@ -625,6 +792,9 @@ def graph_build_status(_=Depends(require_token)):
             st["running"] = False
             st["stage"] = "failed"
             st["error"] = st.get("error") or f"builder exited with code {p.returncode}"
+    # Run the stall watchdog only AFTER the subprocess-exit check, so a
+    # cleanly-exited build isn't misreported as stalled.
+    st = _watchdog_check(st, fp)
     return orj(st)
 
 
@@ -1107,29 +1277,9 @@ def root():
 app.mount("/static", StaticFiles(directory=str(PROJECT / "static")), name="static")
 
 
-@app.on_event("startup")
-def _startup():
-    log.info("Bifröst starting · host=%s port=%s db=%s ollama=%s",
-             BIND_HOST, PORT, DB_URL, OLLAMA_URL)
-    try:
-        get_pool()
-    except Exception as e:
-        log.warning("DB pool could not open at startup (will retry on demand): %s", e)
-    # On startup, if no cache exists for the current fingerprint, queue a build.
-    if load_cached_graph() is None:
-        log.info("no cached chunk graph for current fingerprint — queuing background build")
-        kick_off_build(force=False)
-
-
-@app.on_event("shutdown")
-def _shutdown():
-    global _pool
-    if _pool is not None:
-        try:
-            _pool.close()
-        except Exception as e:
-            log.warning("error closing pool: %s", e)
-    log.info("Bifröst shutting down")
+# docs/bugs/0016: startup/shutdown logic now lives in the `lifespan`
+# async context manager defined above (right after the imports). Deprecated
+# `@app.on_event` decorators have been removed.
 
 
 if __name__ == "__main__":

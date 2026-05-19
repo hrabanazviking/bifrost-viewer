@@ -224,9 +224,26 @@
   <div id="edge-tooltip"></div>
   <div id="graph"></div>
 
-<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
-<script src="https://unpkg.com/three-spritetext@1.9.0/dist/three-spritetext.min.js"></script>
-<script src="https://unpkg.com/3d-force-graph@1.73.4/dist/3d-force-graph.min.js"></script>
+<!--
+  docs/bugs/0015: SRI (Subresource Integrity) hashes pin the CDN bundles
+  to known-good content. If unpkg is compromised or serves modified
+  bytes, the browser refuses to execute and the loader surfaces a network
+  error instead of silently running attacker JS. To bump a version: change
+  the URL, re-run `curl -sL <url> | openssl dgst -sha384 -binary | openssl base64 -A`
+  and paste the new hash.
+-->
+<script
+  src="https://unpkg.com/three@0.160.0/build/three.min.js"
+  integrity="sha384-qOkzR5Ke/XkQxuGVJ9hpFEpDlcoLtWwVYhnJf06cLIZa2vaIptSqaubivErzmD5O"
+  crossorigin="anonymous"></script>
+<script
+  src="https://unpkg.com/three-spritetext@1.9.0/dist/three-spritetext.min.js"
+  integrity="sha384-FxGfi8I/nLfxTlVvya/LZMBK7FefXvieHe2RGSFfjuFleupfwhdNuv68P6VlFi24"
+  crossorigin="anonymous"></script>
+<script
+  src="https://unpkg.com/3d-force-graph@1.73.4/dist/3d-force-graph.min.js"
+  integrity="sha384-GNPicn8pBA2/PGSyPTpxIlPurgLUYcNYJ2zskIq782dE9+gp5E32WSyuxZqA7J+u"
+  crossorigin="anonymous"></script>
 <script>
 const params = new URLSearchParams(location.search);
 const TOKEN = params.get("token") || "";
@@ -414,49 +431,58 @@ async function pickForPath(node) {
   Graph && Graph.refresh();
 }
 
+// docs/bugs/0014: extracted helpers from runSearch so each does one thing.
+
+function _focusCameraOnNodes(nodes) {
+  if (!Graph || !nodes.length) return;
+  const cx = nodes.reduce((s,n)=>s+n.x,0)/nodes.length;
+  const cy = nodes.reduce((s,n)=>s+n.y,0)/nodes.length;
+  const cz = nodes.reduce((s,n)=>s+n.z,0)/nodes.length;
+  Graph.cameraPosition({ x: cx*1.6, y: cy*1.6, z: cz*1.6 + 120 },
+                       { x: cx, y: cy, z: cz }, 1200);
+}
+
+async function _runSkrySearch(q) {
+  const r = await api(`/api/skry?q=${encodeURIComponent(q)}&top_entities=20&top_chunks=80`);
+  const panel = document.getElementById("panel-right");
+  document.getElementById("panel-doc").textContent = `SKRY · ${q}`;
+  document.getElementById("panel-meta").textContent =
+    `${r.entities.length} entities · vocab=${r.vocab_mode}`;
+  const lines = r.entities.map(e =>
+    `• ${e.name}  (${e.kind || ''}) — ${e.count}× across ${e.n_docs} docs · score ${e.score}`
+  );
+  lines.push("", `Evidence chunks: ${r.evidence_chunk_ids.slice(0, 10).join(", ")}`);
+  document.getElementById("panel-text").textContent = lines.join("\n");
+  panel.classList.add("open");
+  if (level === "entity") {
+    const names = new Set(r.entities.map(e => e.name.toLowerCase()));
+    highlightNodes = new Set(
+      rawData.nodes
+        .filter(n => names.has((n.name||'').toLowerCase()))
+        .map(n => n.id)
+    );
+    Graph && Graph.refresh();
+  }
+}
+
+async function _runStandardSearch(q, hyde) {
+  const r = await api(`/api/search?q=${encodeURIComponent(q)}&hyde=${hyde}&k=15`);
+  highlightNodes = new Set(r.hits.map(h => h.id));
+  Graph && Graph.refresh();
+  const hitNodes = rawData.nodes.filter(n => highlightNodes.has(n.id));
+  _focusCameraOnNodes(hitNodes);
+}
+
 async function runSearch() {
   const q = document.getElementById("q").value.trim();
   if (!q) { highlightNodes.clear(); Graph && Graph.refresh(); return; }
   const skryMode = document.getElementById("skry").checked;
-  if (skryMode) {
-    // SKRY: live entity-neighborhood lookup
-    try {
-      const r = await api(`/api/skry?q=${encodeURIComponent(q)}&top_entities=20&top_chunks=80`);
-      const panel = document.getElementById("panel-right");
-      document.getElementById("panel-doc").textContent = `SKRY · ${q}`;
-      document.getElementById("panel-meta").textContent =
-        `${r.entities.length} entities · vocab=${r.vocab_mode}`;
-      let body = "";
-      for (const e of r.entities) {
-        body += `• ${e.name}  (${e.kind || ''}) — ${e.count}× across ${e.n_docs} docs · score ${e.score}\n`;
-      }
-      body += `\nEvidence chunks: ${r.evidence_chunk_ids.slice(0, 10).join(", ")}`;
-      document.getElementById("panel-text").textContent = body;
-      panel.classList.add("open");
-      // Highlight any matching entity nodes if in ENTITIES level
-      if (level === "entity") {
-        const names = new Set(r.entities.map(e => e.name.toLowerCase()));
-        highlightNodes = new Set(rawData.nodes.filter(n => names.has((n.name||'').toLowerCase())).map(n => n.id));
-        Graph && Graph.refresh();
-      }
-    } catch (e) { console.error("skry failed", e); }
-    return;
-  }
   const hyde = document.getElementById("hyde").checked ? 1 : 0;
   try {
-    const r = await api(`/api/search?q=${encodeURIComponent(q)}&hyde=${hyde}&k=15`);
-    highlightNodes = new Set(r.hits.map(h => h.id));
-    Graph && Graph.refresh();
-    const hitNodes = rawData.nodes.filter(n => highlightNodes.has(n.id));
-    if (hitNodes.length) {
-      const cx = hitNodes.reduce((s,n)=>s+n.x,0)/hitNodes.length;
-      const cy = hitNodes.reduce((s,n)=>s+n.y,0)/hitNodes.length;
-      const cz = hitNodes.reduce((s,n)=>s+n.z,0)/hitNodes.length;
-      Graph.cameraPosition({ x: cx*1.6, y: cy*1.6, z: cz*1.6 + 120 },
-                           { x: cx, y: cy, z: cz }, 1200);
-    }
+    if (skryMode) await _runSkrySearch(q);
+    else await _runStandardSearch(q, hyde);
   } catch (e) {
-    console.error("search failed", e);
+    console.error(skryMode ? "skry failed" : "search failed", e);
   }
 }
 

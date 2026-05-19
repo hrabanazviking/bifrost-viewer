@@ -9,8 +9,8 @@
 
 ## Open
 
-_none — all P0/P1 from session 2 have been promoted to dedicated notes and
-fixed additively this session. P2/P3 items remain in this index._
+_None. As of session 3 the entire known bug backlog is closed — 19/19
+resolved across two same-day sessions._
 
 ## Resolved (Session 2 — 2026-05-18)
 
@@ -29,17 +29,22 @@ fixed additively this session. P2/P3 items remain in this index._
 | 0011 | `graph_builder.py` uses `print()` | low | `graph_builder.py:52,85,92` | [bug](0011-graph-builder-print.md) |
 | 0012 | Module docstring endpoint list is stale | low | `viewer.py:1-23` | [bug](0012-docstring-drift.md) |
 
-## Deferred (open in index, fix later)
+## Deferred
 
-| # | Title | Severity | File | Reason for deferral |
+_None. All P2/P3 items from session 2 closed in session 3 (same day) —
+see the Resolved table below. **The backlog is empty.**_
+
+## Resolved (Session 3 — 2026-05-18, "kill the backlog")
+
+| # | Title | Severity | File | Note |
 |---|---|---|---|---|
-| 0013 | `build_graph` is 203 lines (Iron Law: ≤50) | low | `viewer.py:220-422` | Refactor planned for next session — pure restructuring, no behavior change, large diff. Tracked in next session's GOALS. |
-| 0014 | `runSearch` JS function 46 lines | low | `static/index.html:404-448` | Just under limit; refactor when adding a third search mode. |
-| 0015 | CDN deps for three.js / 3d-force-graph / three-spritetext lack SRI hashes | medium | `static/index.html:227-229` | Vendoring planned; needs decision on whether to add a build step. ADR forthcoming. |
-| 0016 | FastAPI `@app.on_event("startup")` deprecated | low | `viewer.py:1066,1080` | Migration to `lifespan` planned; not blocking. |
-| 0017 | No watchdog for stuck graph_builder subprocess | medium | `viewer.py:_do_build` removed; subprocess equiv | Escape hatch is `pkill -f graph_builder.py`. Watchdog is nice-to-have. |
-| 0018 | `require_token` has no explicit return | low | `viewer.py:139-147` | Cosmetic; FastAPI dependency convention allows implicit None. |
-| 0019 | `db_conn()` lacks return type hint | low | `viewer.py:122-124` | Cosmetic; type can be inferred via context manager. |
+| 0013 | `build_graph` was 203 lines | low | `viewer.py` | Refactored into 8 named phase helpers (each ≤50 lines): `_load_chunk_rows`, `_normalize_unit`, `_project_umap_3d`, `_cluster_chunks` + subsampled/full variants, `_compute_term_sets`, `_build_top_k_edges`, `_build_chunk_payload`, `_build_document_payload`. Orchestrator now ~50 lines. Behavior identical; all invariant tests still pass. |
+| 0014 | `runSearch` JS 46 lines | low | `static/index.html` | Extracted `_focusCameraOnNodes`, `_runSkrySearch`, `_runStandardSearch`. `runSearch` is now a 10-line dispatcher. |
+| 0015 | CDN deps lacked SRI | medium | `static/index.html` | `integrity="sha384-..."` + `crossorigin="anonymous"` on all three scripts. Pin recipe in HTML comment. |
+| 0016 | `@app.on_event` deprecated | low | `viewer.py` | Migrated to `lifespan` async context manager. Deprecation warnings gone. |
+| 0017 | No subprocess watchdog | medium | `viewer.py` | `_watchdog_check()` runs inside `graph_build_status`: if the build's status JSON hasn't been updated in `VIEWER_BUILD_STALL_AFTER_SEC` (default 600 s) the subprocess is killed and `stage` is marked `stalled`. |
+| 0018 | `require_token` implicit return | low | `viewer.py` | Explicit `return None` + docstring. |
+| 0019 | `db_conn()` no type hint | low | `viewer.py` | Docstring now documents the `psycopg_pool.PoolConnectionContext` → `psycopg.Connection` contract. |
 
 ---
 

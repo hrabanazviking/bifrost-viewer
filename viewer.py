@@ -41,10 +41,11 @@ Robustness vows (per PROJECT_LAWS.md)
 from __future__ import annotations
 
 import datetime
-import json
+import asyncio
 import logging
 import os
 import secrets
+import sys
 import threading
 import time
 import traceback
@@ -57,7 +58,6 @@ import httpx
 import numpy as np
 import orjson
 import psycopg
-import uvicorn
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
@@ -65,6 +65,7 @@ from fastapi.staticfiles import StaticFiles
 from pgvector.psycopg import register_vector
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel
+from runtime_support import atomic_json, valid_graph
 
 
 # ─── request models ─────────────────────────────────────────────────────────
@@ -96,11 +97,16 @@ EDGE_LABEL_TERMS = int(os.environ.get("VIEWER_EDGE_LABEL_TERMS", "4"))
 OLLAMA_URL = os.environ["VIEWER_OLLAMA_URL"]
 EMBED_MODEL = os.environ["VIEWER_EMBED_MODEL"]
 CHAT_MODEL = os.environ["VIEWER_CHAT_MODEL"]
+DB_TIMEOUT = float(os.environ.get("VIEWER_DB_TIMEOUT", "5"))
+RECOVERY_INTERVAL = float(os.environ.get("VIEWER_RECOVERY_INTERVAL", "30"))
+BUILD_RETRY_DELAY = float(os.environ.get("VIEWER_BUILD_RETRY_DELAY", "120"))
+LOOPBACK_HOST = os.environ.get("VIEWER_LOOPBACK_HOST", "127.0.0.1")
+EDGE_BLOCK_SIZE = max(1, int(os.environ.get("VIEWER_EDGE_BLOCK_SIZE", "256")))
 
-CACHE_DIR = PROJECT / ".cache"
-CACHE_DIR.mkdir(exist_ok=True)
-LOG_DIR = PROJECT / "logs"
-LOG_DIR.mkdir(exist_ok=True)
+CACHE_DIR = Path(os.environ.get("VIEWER_CACHE_DIR", str(PROJECT / ".cache")))
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+LOG_DIR = Path(os.environ.get("VIEWER_LOG_DIR", str(PROJECT / "logs")))
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # ─── logging ────────────────────────────────────────────────────────────────
 
@@ -118,6 +124,7 @@ log = logging.getLogger("bifrost")
 # ─── DB pool (opened lazily so import does not require the DB) ──────────────
 
 _pool: Optional[ConnectionPool] = None
+_pool_lock = threading.Lock()
 
 
 def _configure_conn(conn: psycopg.Connection) -> None:
@@ -126,12 +133,14 @@ def _configure_conn(conn: psycopg.Connection) -> None:
 
 def get_pool() -> ConnectionPool:
     global _pool
-    if _pool is None:
-        _pool = ConnectionPool(
-            DB_URL, min_size=1, max_size=8, timeout=30,
-            kwargs={"autocommit": False}, configure=_configure_conn, open=True,
-        )
-        log.info("opened DB connection pool")
+    with _pool_lock:
+        if _pool is None or _pool.closed:
+            _pool = ConnectionPool(
+                DB_URL, min_size=1, max_size=8, timeout=DB_TIMEOUT,
+                kwargs={"autocommit": False, "connect_timeout": max(1, int(DB_TIMEOUT))},
+                configure=_configure_conn, open=True,
+            )
+            log.info("opened DB connection pool")
     return _pool
 
 
@@ -151,27 +160,39 @@ def db_conn():
     return get_pool().connection()
 
 
+def close_pool() -> None:
+    global _pool
+    with _pool_lock:
+        pool, _pool = _pool, None
+    if pool is not None:
+        pool.close()
+
+
 # ─── app + lifespan + auth ──────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan context manager — docs/bugs/0016 replaces the
     deprecated @app.on_event("startup") / ("shutdown") decorators."""
-    log.info("Bifröst starting · host=%s port=%s db=%s ollama=%s",
-             BIND_HOST, PORT, DB_URL, OLLAMA_URL)
+    log.info("Bifröst starting · host=%s port=%s", BIND_HOST, PORT)
     try:
         get_pool()
     except Exception as e:
         log.warning("DB pool could not open at startup (will retry on demand): %s", e)
-    if load_cached_graph() is None:
-        log.info("no cached chunk graph for current fingerprint — queuing background build")
-        kick_off_build(force=False)
-    yield
+    maintenance = asyncio.create_task(_maintenance_loop())
+    try:
+        yield
+    finally:
+        maintenance.cancel()
+        try:
+            await maintenance
+        except asyncio.CancelledError:
+            pass
     # shutdown
     global _pool
     if _pool is not None:
         try:
-            _pool.close()
+            close_pool()
         except Exception as e:
             log.warning("error closing pool: %s", e)
     log.info("Bifröst shutting down")
@@ -272,7 +293,7 @@ def fingerprint() -> str:
     with db_conn() as conn, conn.cursor() as cur:
         cur.execute("SELECT COUNT(*), COALESCE(MAX(id), 0) FROM chunks")
         n, max_id = cur.fetchone()
-    return f"v2_{n}_{max_id}"
+    return f"v3_{n}_{max_id}"
 
 
 def cache_path(fp: str) -> Path:
@@ -293,7 +314,7 @@ def _load_chunk_rows() -> list[tuple]:
             SELECT c.id, c.document_id, c.chunk_index, c.text, c.embedding,
                    d.title, d.content_type, d.source
             FROM chunks c JOIN documents d ON c.document_id = d.id
-            ORDER BY c.id
+            WHERE c.embedding IS NOT NULL ORDER BY c.id
             """
         )
         return cur.fetchall()
@@ -308,6 +329,8 @@ def _normalize_unit(embeddings: np.ndarray) -> np.ndarray:
 
 def _project_umap_3d(embeddings: np.ndarray, n: int) -> np.ndarray:
     """3-D UMAP projection rescaled to fit a 200-unit viewer box."""
+    if n <= 4:
+        return np.zeros((n, 3), dtype=np.float32)
     import umap
     n_neighbors = max(2, min(15, n - 1))
     reducer = umap.UMAP(n_components=3, n_neighbors=n_neighbors, metric="cosine",
@@ -325,7 +348,7 @@ def _cluster_subsampled(unit: np.ndarray, n: int, step) -> np.ndarray:
     import hdbscan
     step(f"HDBSCAN clustering · subsample {HDBSCAN_SUBSAMPLE_SIZE}/{n}", 0.55)
     rng = np.random.default_rng(42)
-    sample_idx = rng.choice(n, size=HDBSCAN_SUBSAMPLE_SIZE, replace=False)
+    sample_idx = rng.choice(n, size=min(n, HDBSCAN_SUBSAMPLE_SIZE), replace=False)
     sample_idx.sort()
     sample_unit = unit[sample_idx]
     clusterer = hdbscan.HDBSCAN(
@@ -335,9 +358,12 @@ def _cluster_subsampled(unit: np.ndarray, n: int, step) -> np.ndarray:
     )
     sample_labels = clusterer.fit_predict(sample_unit)
     step("propagating cluster labels via 1-NN cosine", 0.66)
-    sim_to_samples = unit @ sample_unit.T   # (N, S)
-    nearest = np.argmax(sim_to_samples, axis=1)
-    return sample_labels[nearest].astype(int)
+    labels = np.empty(n, dtype=int)
+    for start in range(0, n, EDGE_BLOCK_SIZE):
+        stop = min(n, start + EDGE_BLOCK_SIZE)
+        nearest = np.argmax(unit[start:stop] @ sample_unit.T, axis=1)
+        labels[start:stop] = sample_labels[nearest]
+    return labels
 
 
 def _cluster_full(unit: np.ndarray) -> np.ndarray:
@@ -380,31 +406,29 @@ def _compute_term_sets(texts: list[str]) -> list[set[str]]:
 def _build_top_k_edges(
     unit: np.ndarray, ids: list, term_sets: list[set[str]], n: int,
 ) -> list[dict]:
-    """Top-K cosine edges per chunk with shared salient terms attached."""
-    if n < 2:
-        return []
-    sim = unit @ unit.T
-    np.fill_diagonal(sim, -1.0)
+    """Exact cosine neighbors in row blocks; memory scales with block size."""
     k = min(EDGE_TOP_K, n - 1)
     if k <= 0:
         return []
-    top_idx = np.argpartition(-sim, kth=k - 1, axis=1)[:, :k]
     seen: set[tuple[int, int]] = set()
     links: list[dict] = []
-    for i in range(n):
-        for j in top_idx[i]:
-            j = int(j)
-            s = float(sim[i, j])
-            if s < EDGE_MIN_SIM or i == j:
-                continue
-            a, b = (i, j) if i < j else (j, i)
-            if (a, b) in seen:
-                continue
-            seen.add((a, b))
-            shared = (sorted(term_sets[a] & term_sets[b])[:EDGE_LABEL_TERMS]
-                      if term_sets[a] and term_sets[b] else [])
-            links.append({"source": ids[a], "target": ids[b],
-                          "sim": round(s, 3), "shared": shared})
+    for start in range(0, n, EDGE_BLOCK_SIZE):
+        stop = min(n, start + EDGE_BLOCK_SIZE)
+        sim = unit[start:stop] @ unit.T
+        sim[np.arange(stop - start), np.arange(start, stop)] = -1.0
+        indices = np.argpartition(-sim, kth=k - 1, axis=1)[:, :k]
+        for local, neighbors in enumerate(indices):
+            i = start + local
+            for j in neighbors:
+                j = int(j)
+                score = float(sim[local, j])
+                a, b = sorted((i, j))
+                if score < EDGE_MIN_SIM or i == j or (a, b) in seen:
+                    continue
+                seen.add((a, b))
+                shared = sorted(term_sets[a] & term_sets[b])[:EDGE_LABEL_TERMS]
+                links.append({"source": ids[a], "target": ids[b],
+                              "sim": round(score, 3), "shared": shared})
     return links
 
 
@@ -482,13 +506,8 @@ def _build_document_payload(
         if nv > 0:
             doc_centroids[d] = v / nv
 
-    doc_links: list[dict] = []
-    for i, d1 in enumerate(unique_docs):
-        for d2 in unique_docs[i + 1:]:
-            s = float(doc_centroids[d1] @ doc_centroids[d2])
-            if s >= EDGE_MIN_SIM:
-                doc_links.append({"source": d1, "target": d2,
-                                  "sim": round(s, 3), "shared": []})
+    doc_vectors = np.asarray([doc_centroids[d] for d in unique_docs], dtype=np.float32)
+    doc_links = _build_top_k_edges(doc_vectors, unique_docs, [set()] * len(unique_docs), len(unique_docs))
 
     documents_meta = [
         {"id": d, "title": doc_meta[d][0], "content_type": doc_meta[d][1],
@@ -500,7 +519,7 @@ def _build_document_payload(
         "documents": documents_meta, "clusters": [],
         "stats": {"n_chunks": len(doc_ids), "n_docs": len(documents_meta),
                   "n_edges": len(doc_links), "n_clusters": 0,
-                  "edge_top_k": "all-pairs", "edge_min_sim": EDGE_MIN_SIM},
+                  "edge_top_k": EDGE_TOP_K, "edge_min_sim": EDGE_MIN_SIM},
     }
 
 
@@ -536,6 +555,8 @@ def build_graph(fp: str, progress=None) -> dict:
     doc_ids = [r[1] for r in rows]
     texts = [r[3] for r in rows]
     embeddings = np.array([r[4] for r in rows], dtype=np.float32)
+    if embeddings.ndim != 2 or not np.isfinite(embeddings).all():
+        raise ValueError("corpus contains malformed embeddings; existing graph preserved")
     unit = _normalize_unit(embeddings)
     n = len(rows)
     doc_meta = {r[1]: (r[5], r[6], r[7]) for r in rows}
@@ -581,83 +602,124 @@ def _build_status_path(fp: str) -> Path:
 
 
 def _read_build_status(fp: str) -> dict:
-    p = _build_status_path(fp)
-    if not p.exists():
-        return {"running": False, "stage": "idle", "progress": 0.0,
-                "started_at": None, "finished_at": None, "error": None,
-                "fingerprint": fp}
+    default = {"running": False, "stage": "idle", "progress": 0.0,
+               "started_at": None, "finished_at": None, "error": None, "fingerprint": fp}
     try:
-        return orjson.loads(p.read_bytes())
-    except Exception as e:
-        return {"running": False, "stage": "status-unreadable", "progress": 0.0,
-                "error": str(e), "fingerprint": fp}
+        payload = orjson.loads(_build_status_path(fp).read_bytes())
+        if not isinstance(payload, dict):
+            raise ValueError("status must be an object")
+        return {**default, **payload}
+    except FileNotFoundError:
+        return default
+    except Exception as exc:
+        return {**default, "stage": "status-unreadable", "error": str(exc)}
 
 
 def kick_off_build(force: bool = False) -> bool:
-    """Spawn graph_builder.py for the current fingerprint, returning True if a
-    new build was started (False if the cache is already valid or a build is
-    already running)."""
+    """Repair absent/corrupt caches, while keeping a previous good file intact."""
     import subprocess
     try:
         fp = fingerprint()
-    except Exception as e:
-        log.warning("cannot compute fingerprint: %s", e)
-        return False
-    target = cache_path(fp)
-    if not force and target.exists():
-        # Already cached — mark status as done so polling clients see "ready".
-        _build_status_path(fp).write_bytes(orjson.dumps({
-            "running": False, "stage": "cached", "progress": 1.0,
-            "fingerprint": fp, "started_at": None,
-            "finished_at": datetime.datetime.now().isoformat(),
-            "error": None,
-        }))
+    except Exception as exc:
+        log.warning("cannot compute fingerprint: %s", exc)
         return False
     with _build_proc_lock:
-        p = _build_proc["proc"]
-        if p is not None and p.poll() is None:
-            return False  # already running
-        # Prune old per-fingerprint status files
-        for old in CACHE_DIR.glob("build_status_v*.json"):
-            if old != _build_status_path(fp):
-                try:
-                    old.unlink()
-                except OSError:
-                    pass
-        log_path = LOG_DIR / f"graph_build_{int(time.time())}.log"
-        log_file = open(log_path, "w")
-        try:
-            proc = subprocess.Popen(
-                ["uv", "run", str(PROJECT / "graph_builder.py"), fp],
-                cwd=str(PROJECT),
-                stdout=log_file, stderr=subprocess.STDOUT,
-            )
-        finally:
-            log_file.close()   # parent's dup; subprocess has its own — see docs/bugs/0007
-        _build_proc.update({
-            "proc": proc, "fp": fp,
-            "started_at": datetime.datetime.now().isoformat(),
-            "log_path": str(log_path),
+        current = _build_proc["proc"]
+        if current is not None and current.poll() is None:
+            return False
+        if not force and _graph_cache_valid(fp):
+            return False
+        log_path = LOG_DIR / f"graph_build_{time.time_ns()}.log"
+        atomic_json(_build_status_path(fp), {
+            "running": True, "stage": "queued", "progress": 0.0, "fingerprint": fp,
+            "started_at": datetime.datetime.now().isoformat(), "error": None,
         })
-        log.info("spawned graph_builder pid=%s fp=%s log=%s", proc.pid, fp, log_path.name)
+        try:
+            with log_path.open("w") as stream:
+                proc = subprocess.Popen([sys.executable, str(PROJECT / "graph_builder.py"), fp],
+                                        cwd=PROJECT, stdout=stream, stderr=subprocess.STDOUT)
+        except Exception as exc:
+            atomic_json(_build_status_path(fp), {"running": False, "stage": "failed", "error": str(exc)})
+            raise
+        _build_proc.update({"proc": proc, "fp": fp, "started_at": time.time(),
+                            "log_path": str(log_path), "retry_after": time.time() + BUILD_RETRY_DELAY})
+        log.info("spawned graph_builder pid=%s fp=%s", proc.pid, fp)
         return True
 
 
 def load_cached_graph() -> dict | None:
-    """Return cached graph for the current fingerprint, or None if no cache."""
+    """An existing but malformed cache is a cache miss, never a ready graph."""
     try:
         fp = fingerprint()
-    except Exception as e:
-        log.warning("could not compute fingerprint: %s", e)
-        return None
+        payload = orjson.loads(cache_path(fp).read_bytes())
+        if valid_graph(payload, fp):
+            return payload
+        log.warning("graph cache has an invalid shape: %s", fp)
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        log.warning("graph cache unavailable: %s", exc)
+    return None
+
+
+_cache_check_lock = threading.Lock()
+_cache_validity: dict = {}
+
+
+def _graph_cache_valid(fp: str) -> bool:
     path = cache_path(fp)
-    if not path.exists():
-        return None
     try:
-        return orjson.loads(path.read_bytes())
-    except Exception as e:
-        log.warning("cache file %s unreadable: %s", path.name, e)
-        return None
+        stat = path.stat()
+        signature = (fp, stat.st_mtime_ns, stat.st_size)
+        with _cache_check_lock:
+            if _cache_validity.get("signature") == signature:
+                return _cache_validity["valid"]
+            valid = valid_graph(orjson.loads(path.read_bytes()), fp)
+            _cache_validity.update(signature=signature, valid=valid)
+            return valid
+    except (OSError, ValueError):
+        return False
+
+
+def _checked_build_status(fp: str) -> dict:
+    status = _read_build_status(fp)
+    with _build_proc_lock:
+        proc = _build_proc["proc"]
+        owned = _build_proc["fp"] == fp
+        if status.get("running") and (proc is None or (owned and proc.poll() is not None)):
+            status.update(running=False, stage="failed", error="builder stopped before completion")
+            atomic_json(_build_status_path(fp), status)
+    return _watchdog_check(status, fp)
+
+
+def _maintenance_tick() -> None:
+    _check_entity_layout()
+    fp = fingerprint()
+    with _build_proc_lock:
+        proc = _build_proc["proc"]
+        if proc is not None and proc.poll() is None and _build_proc["fp"] != fp:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                proc.kill()
+                proc.wait(timeout=5)
+            atomic_json(_build_status_path(_build_proc["fp"]), {
+                "running": False, "stage": "superseded", "error": "corpus changed; rebuilding latest data"})
+            _build_proc["retry_after"] = 0
+    _checked_build_status(fp)
+    if not _graph_cache_valid(fp) and time.time() >= _build_proc.get("retry_after", 0):
+        kick_off_build()
+
+
+async def _maintenance_loop() -> None:
+    """Recovery continues even when no browser is polling the viewer."""
+    while True:
+        try:
+            await asyncio.to_thread(_maintenance_tick)
+        except Exception as exc:
+            log.warning("maintenance deferred; will retry: %s", exc)
+        await asyncio.sleep(max(1, RECOVERY_INTERVAL))
 
 
 # ─── ollama helpers ─────────────────────────────────────────────────────────
@@ -666,7 +728,11 @@ def ollama_embed(texts: list[str]) -> list[list[float]]:
     r = httpx.post(f"{OLLAMA_URL}/api/embed",
                    json={"model": EMBED_MODEL, "input": texts}, timeout=300)
     r.raise_for_status()
-    return r.json()["embeddings"]
+    vectors = np.asarray(r.json().get("embeddings"), dtype=np.float32)
+    if (vectors.ndim != 2 or vectors.shape[0] != len(texts) or not vectors.shape[1]
+            or not np.isfinite(vectors).all() or not np.all(np.any(vectors, axis=1))):
+        raise ValueError("embedding service returned invalid or incomplete vectors")
+    return vectors.tolist()
 
 
 def ollama_chat(prompt: str, *, system: str | None = None, max_tokens: int = 256) -> str:
@@ -709,7 +775,7 @@ def health(_=Depends(require_token)):
     cache_exists = False
     try:
         fp = fingerprint() if db_ok else None
-        cache_exists = bool(fp) and cache_path(fp).exists()
+        cache_exists = bool(fp) and _graph_cache_valid(fp)
     except Exception:
         fp = None
     build_st = _read_build_status(fp) if fp else {"stage": "unknown"}
@@ -767,7 +833,7 @@ def _watchdog_check(st: dict, fp: str) -> dict:
                    "subprocess killed")
     # Persist the stall to the status file so subsequent reads agree
     try:
-        status_file.write_bytes(orjson.dumps(st))
+        atomic_json(status_file, st)
     except Exception:
         pass
     return st
@@ -778,24 +844,12 @@ def _watchdog_check(st: dict, fp: str) -> dict:
 def graph_build_status(_=Depends(require_token)):
     try:
         fp = fingerprint()
-    except Exception as e:
-        return orj({"running": False, "stage": "no-db", "error": str(e),
+        state = _checked_build_status(fp)
+        state.update(current_fingerprint=fp, cache_exists=_graph_cache_valid(fp))
+        return orj(state)
+    except Exception as exc:
+        return orj({"running": False, "stage": "no-db", "error": str(exc),
                     "cache_exists": False, "current_fingerprint": None})
-    st = _read_build_status(fp)
-    st["current_fingerprint"] = fp
-    st["cache_exists"] = cache_path(fp).exists()
-    # If the subprocess died without writing 'finished_at', mark failed.
-    with _build_proc_lock:
-        p = _build_proc["proc"]
-        if (p is not None and p.poll() is not None
-                and st.get("running") and _build_proc["fp"] == fp):
-            st["running"] = False
-            st["stage"] = "failed"
-            st["error"] = st.get("error") or f"builder exited with code {p.returncode}"
-    # Run the stall watchdog only AFTER the subprocess-exit check, so a
-    # cleanly-exited build isn't misreported as stalled.
-    st = _watchdog_check(st, fp)
-    return orj(st)
 
 
 @app.post("/api/graph/build")
@@ -880,6 +934,41 @@ def cluster_names(_=Depends(require_token)):
     return orj(out)
 
 
+def _keyword_hits(query: str, k: int) -> list[dict]:
+    with db_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id, document_id, ts_rank(tsv, plainto_tsquery('english', %s)) "
+                    "FROM chunks WHERE tsv @@ plainto_tsquery('english', %s) "
+                    "ORDER BY 3 DESC, id LIMIT %s", (query, query, k))
+        return [{"id": cid, "doc_id": did, "sim": 0.0, "score": float(score)} for cid, did, score in cur.fetchall()]
+
+
+def _hybrid_hits(query: str, embedding: list[float], k: int) -> list[dict]:
+    with db_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            WITH sem AS (
+                SELECT c.id, 1 - (c.embedding <=> %s::vector) AS sim,
+                       ROW_NUMBER() OVER (ORDER BY c.embedding <=> %s::vector) AS sem_rank
+                FROM chunks c WHERE c.embedding IS NOT NULL
+                ORDER BY c.embedding <=> %s::vector LIMIT 60
+            ), kw AS (
+                SELECT c.id,
+                       ROW_NUMBER() OVER (ORDER BY ts_rank(c.tsv, plainto_tsquery('english', %s)) DESC, c.id) AS kw_rank
+                FROM chunks c WHERE c.tsv @@ plainto_tsquery('english', %s)
+                ORDER BY ts_rank(c.tsv, plainto_tsquery('english', %s)) DESC, c.id LIMIT 60
+            )
+            SELECT COALESCE(sem.id, kw.id), COALESCE(sem.sim, 0),
+                   COALESCE(1.0/(60+sem.sem_rank), 0) + COALESCE(1.0/(60+kw.kw_rank), 0) AS rrf,
+                   c.document_id
+            FROM sem FULL OUTER JOIN kw ON sem.id = kw.id
+            JOIN chunks c ON c.id = COALESCE(sem.id, kw.id)
+            ORDER BY rrf DESC, c.id LIMIT %s
+            """, (embedding, embedding, embedding, query, query, query, k),
+        )
+        return [{"id": cid, "doc_id": did, "sim": float(sim), "score": float(score)}
+                for cid, sim, score, did in cur.fetchall()]
+
+
 @app.get("/api/search")
 @safely("search")
 def search(q: str, k: int = 12, hyde: int = 0, _=Depends(require_token)):
@@ -887,45 +976,22 @@ def search(q: str, k: int = 12, hyde: int = 0, _=Depends(require_token)):
         raise HTTPException(status_code=400, detail="empty query")
     if k < 1 or k > 100:
         raise HTTPException(status_code=400, detail="k must be in [1, 100]")
-    query_text = q
     hyde_doc = None
     if hyde:
         try:
             hyde_doc = ollama_chat(
                 f"Write a short, factual passage (3-5 sentences) that would answer the question:\n\n{q}",
-                system="You are a knowledgeable assistant. Write only the passage, no preamble.",
-                max_tokens=180,
-            )
-            query_text = hyde_doc
-        except Exception as e:
-            log.warning("HyDE generation failed (falling back to raw query): %s", e)
-            hyde_doc = None
+                system="You are a knowledgeable assistant. Write only the passage, no preamble.", max_tokens=180)
+        except Exception as exc:
+            log.warning("HyDE unavailable; using raw query: %s", exc)
     try:
-        emb = ollama_embed([query_text])[0]
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"ollama embed failed: {e}")
-    with db_conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            """
-            WITH sem AS (
-                SELECT c.id, 1 - (c.embedding <=> %s::vector) AS sim,
-                       ROW_NUMBER() OVER (ORDER BY c.embedding <=> %s::vector) AS sem_rank
-                FROM chunks c ORDER BY c.embedding <=> %s::vector LIMIT 60
-            ),
-            kw AS (
-                SELECT c.id, ts_rank(c.tsv, plainto_tsquery('english', %s)) AS kw,
-                       ROW_NUMBER() OVER (ORDER BY ts_rank(c.tsv, plainto_tsquery('english', %s)) DESC) AS kw_rank
-                FROM chunks c WHERE c.tsv @@ plainto_tsquery('english', %s) LIMIT 60
-            )
-            SELECT sem.id, sem.sim,
-                   COALESCE(1.0/(60+sem.sem_rank), 0) + COALESCE(1.0/(60+kw.kw_rank), 0) AS rrf
-            FROM sem LEFT JOIN kw ON sem.id = kw.id
-            ORDER BY rrf DESC NULLS LAST LIMIT %s
-            """,
-            (emb, emb, emb, q, q, q, k),
-        )
-        hits = [{"id": r[0], "sim": float(r[1]), "score": float(r[2])} for r in cur.fetchall()]
-    return orj({"query": q, "hyde_used": bool(hyde), "hyde_doc": hyde_doc, "hits": hits})
+        embedding = ollama_embed([hyde_doc or q])[0]
+    except Exception as exc:
+        log.warning("semantic search unavailable; using keyword matches: %s", exc)
+        return orj({"query": q, "hyde_used": False, "hyde_doc": None,
+                    "hits": _keyword_hits(q, k), "search_mode": "keyword", "degraded": True})
+    return orj({"query": q, "hyde_used": bool(hyde_doc), "hyde_doc": hyde_doc,
+                "hits": _hybrid_hits(q, embedding, k), "search_mode": "hybrid", "degraded": False})
 
 
 @app.get("/api/path")
@@ -974,8 +1040,10 @@ def skein_status(_=Depends(require_token)):
     with db_conn() as conn, conn.cursor() as cur:
         if not _skein_tables_exist(cur):
             return orj({"built": False, "running": running, "n_entities": 0, "n_relations": 0})
-        cur.execute("SELECT COUNT(*) FROM skein_entities"); ne = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM skein_relations"); nr = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM skein_entities")
+        ne = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM skein_relations")
+        nr = cur.fetchone()[0]
         cur.execute("SELECT fingerprint, finished_at, stats FROM skein_build ORDER BY id DESC LIMIT 1")
         last = cur.fetchone()
     return orj({
@@ -1065,6 +1133,41 @@ def _build_skein_graph(fp: str) -> dict:
     }
 
 
+_entity_proc: dict = {"proc": None, "fp": None}
+_entity_proc_lock = threading.Lock()
+
+
+def _check_entity_layout() -> None:
+    """Supervise entity layout even when no browser is polling it."""
+    with _entity_proc_lock:
+        proc = _entity_proc["proc"]
+        if proc is None or proc.poll() is not None:
+            return
+        fp = "entity_" + _entity_proc["fp"]
+        path = _build_status_path(fp)
+        updated = path.stat().st_mtime if path.exists() else _entity_proc["started_at"]
+        if time.time() - updated <= BUILD_STALL_AFTER_SEC:
+            return
+        proc.kill()
+        proc.wait(timeout=5)
+        atomic_json(path, {"running": False, "stage": "stalled", "error": "entity layout stopped after stalled progress"})
+        _entity_proc["retry_after"] = time.time() + BUILD_RETRY_DELAY
+        log.warning("stalled entity layout killed; retry will follow the cooldown")
+
+
+def _start_entity_layout(fp: str) -> None:
+    import subprocess
+    with _entity_proc_lock:
+        proc = _entity_proc["proc"]
+        if proc is not None and proc.poll() is None:
+            return
+        atomic_json(_build_status_path("entity_" + fp), {"running": True, "stage": "queued", "progress": 0.0})
+        with (LOG_DIR / f"entity_layout_{time.time_ns()}.log").open("w") as stream:
+            proc = subprocess.Popen([sys.executable, str(PROJECT / "graph_builder.py"), fp, "entity"],
+                                    cwd=PROJECT, stdout=stream, stderr=subprocess.STDOUT)
+        _entity_proc.update(proc=proc, fp=fp, started_at=time.time(), retry_after=time.time() + BUILD_RETRY_DELAY)
+
+
 @app.get("/api/skein/graph")
 @safely("skein_graph")
 def skein_graph(_=Depends(require_token)):
@@ -1073,14 +1176,21 @@ def skein_graph(_=Depends(require_token)):
             return orj({"fingerprint": None, "nodes": [], "links": [], "kinds": []})
         fp = _skein_fingerprint(cur) or "noversion"
     path = CACHE_DIR / f"skein_graph_{fp}.json"
-    if path.exists():
-        try:
-            return orj(orjson.loads(path.read_bytes()))
-        except Exception as e:
-            log.warning("skein graph cache unreadable, rebuilding: %s", e)
-    g = _build_skein_graph(fp)
-    path.write_bytes(orjson.dumps(g, option=orjson.OPT_SERIALIZE_NUMPY))
-    return orj(g)
+    try:
+        payload = orjson.loads(path.read_bytes())
+        if (isinstance(payload, dict) and payload.get("fingerprint") == fp
+                and isinstance(payload.get("nodes"), list) and isinstance(payload.get("links"), list)):
+            return orj(payload)
+    except (OSError, ValueError):
+        pass
+    status = _read_build_status("entity_" + fp)
+    with _entity_proc_lock:
+        proc = _entity_proc["proc"]
+        failed = proc is not None and proc.poll() is not None and _entity_proc["fp"] == fp
+    if failed and status.get("error") and time.time() < _entity_proc.get("retry_after", 0):
+        return orj({"error": status["error"], "retryable": True}, status_code=503)
+    _start_entity_layout(fp)
+    return orj({"pending": True, "build_state": status}, status_code=202)
 
 
 @app.get("/api/skry")
@@ -1135,7 +1245,8 @@ def _ingest_job_state(job_id: str) -> dict | None:
 def ingest_url(payload: IngestUrlRequest, _=Depends(require_token)):
     """Spawn an ingest subprocess for one URL. See docs/bugs/0009 (Pydantic
     model added), docs/bugs/0007 (log handle leak fixed)."""
-    import subprocess, uuid
+    import subprocess
+    import uuid
     url = payload.url.strip()
     if not url:
         raise HTTPException(status_code=400, detail="missing 'url'")
@@ -1225,8 +1336,10 @@ def gpu(_=Depends(require_token)):
                 if len(parts) < 7:
                     continue
                 def _num(s, t=float):
-                    try: return t(s)
-                    except (ValueError, TypeError): return None
+                    try:
+                        return t(s)
+                    except (ValueError, TypeError):
+                        return None
                 gpus.append({
                     "name": parts[0],
                     "util_pct": _num(parts[1], int),
@@ -1259,11 +1372,16 @@ def kg_status(_=Depends(require_token)):
         )
         if not cur.fetchone()[0]:
             return orj({"started": False, "total": 0, "done": 0, "entities": 0, "relations": 0})
-        cur.execute("SELECT COUNT(*) FROM chunks"); total = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM kg_extraction_progress WHERE status = 'done'"); done = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM kg_extraction_progress WHERE status = 'failed'"); failed = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM kg_entities"); n_e = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM kg_relations"); n_r = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM chunks")
+        total = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM kg_extraction_progress WHERE status = 'done'")
+        done = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM kg_extraction_progress WHERE status = 'failed'")
+        failed = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM kg_entities")
+        n_e = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM kg_relations")
+        n_r = cur.fetchone()[0]
     return orj({"started": True, "total": total, "done": done, "failed": failed,
                 "entities": n_e, "relations": n_r,
                 "pct": round(100.0 * done / total, 1) if total else 0.0})
@@ -1287,4 +1405,5 @@ if __name__ == "__main__":
     # VIEWER_TOKEN from .env if they need the URL.
     log.info("Bifröst on http://%s:%s/?token=***  (token in VIEWER_TOKEN env var)",
              BIND_HOST, PORT)
-    uvicorn.run(app, host=BIND_HOST, port=PORT, log_level="info")
+    from local_server import serve
+    serve(app, host=BIND_HOST, loopback=LOOPBACK_HOST, port=PORT)

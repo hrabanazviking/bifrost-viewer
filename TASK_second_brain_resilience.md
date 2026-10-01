@@ -30,3 +30,19 @@ Add regression tests for observed failure paths, run existing tests, validate se
 3. Implement the scoped fixes and regression tests.
 4. Deploy locally and verify behavior.
 5. Update architecture/interface/devlog documentation and push verified changes.
+
+## Completed verification
+
+2026-09-30: 25 tests pass. Ruff passes for changed Python modules and scripts;
+JavaScript syntax and staged whitespace checks pass. The production service serves
+both loopback and its existing tailnet address. Live authenticated document/chunk
+and entity graph requests succeed. Hybrid search ranks the maintenance canary
+first; an isolated server with Ollama unavailable returns the same document via
+keyword fallback. A forced service crash automatically recovered in 6.06 seconds.
+The production corpus has 1235 documents and 49004 embedded chunks after adding
+one explicit verification document. Document edges fell from 756549 to 3867.
+Existing source rows and old cache files remain preserved.
+
+Entity view retains the last successful Skein graph: 8586 entities and 26339
+relations. Its layout was rebuilt; full entity discovery was not rerun against
+all documents. Source edits that retain count/max-ID require a forced rebuild.

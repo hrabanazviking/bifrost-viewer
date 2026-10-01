@@ -191,3 +191,12 @@ Support is always appreciated, but never required. Using, sharing, testing, cont
 
 
 
+
+## Resilience update (September 2026)
+
+Open the desktop launcher or http://127.0.0.1:8731 and enter your existing access
+token. Document overview loads first; CHUNKS retains full detail. Both layouts
+report progress. Database outages and corrupt caches recover through periodic
+maintenance. Graph neighbor calculations use row blocks and document edges are
+sparse, reducing memory and browser load. Semantic-search outages fall back to
+clearly identified keyword matches. See [operations](docs/operations.md).

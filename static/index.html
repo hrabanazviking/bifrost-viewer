@@ -157,8 +157,8 @@
     <div class="sub">knowledge graph · 3D</div>
     <div id="stats"></div>
     <div class="toggles">
-      <button class="toggle on" data-level="chunk">CHUNKS</button>
-      <button class="toggle" data-level="document">DOCS</button>
+      <button class="toggle" data-level="chunk">CHUNKS</button>
+      <button class="toggle on" data-level="document">DOCS</button>
       <button class="toggle" data-level="entity">ENTITIES</button>
     </div>
     <div class="toggles">
@@ -246,12 +246,16 @@
   crossorigin="anonymous"></script>
 <script>
 const params = new URLSearchParams(location.search);
-const TOKEN = params.get("token") || "";
+let TOKEN = params.get("token") || new URLSearchParams(location.hash.slice(1)).get("token") || "";
+if (params.has("token")) {
+  params.delete("token");
+  history.replaceState(null, "", location.pathname + (params.size ? "?" + params : "") + "#token=" + encodeURIComponent(TOKEN));
+}
 const AUTH = { headers: { Authorization: "Bearer " + TOKEN } };
 
 let Graph = null;
 let rawData = null;
-let level = "chunk";
+let level = "document";
 let colorBy = "doc";              // 'doc' | 'cluster'
 let clusterNames = null;
 let hiddenIds = new Set();        // doc or cluster ids
@@ -261,8 +265,13 @@ let pathLinks = new Set();        // "a-b" canonical
 let pathA = null, pathB = null;
 
 async function api(path, opts = {}) {
-  const r = await fetch(path, { ...AUTH, ...opts, headers: { ...AUTH.headers, ...(opts.headers||{}) } });
-  if (!r.ok) throw new Error(path + " → " + r.status);
+  const r = await fetch(path, { ...AUTH, ...opts, signal: opts.signal || AbortSignal.timeout(30000),
+    headers: { ...AUTH.headers, ...(opts.headers||{}) } });
+  if (!r.ok) {
+    let message = path + " → " + r.status;
+    try { const body = await r.json(); message = body.error || body.detail || message; } catch {}
+    throw new Error(message);
+  }
   return r.json();
 }
 
@@ -467,7 +476,8 @@ async function _runSkrySearch(q) {
 
 async function _runStandardSearch(q, hyde) {
   const r = await api(`/api/search?q=${encodeURIComponent(q)}&hyde=${hyde}&k=15`);
-  highlightNodes = new Set(r.hits.map(h => h.id));
+  highlightNodes = new Set(r.hits.map(h => level === "document" ? h.doc_id : h.id));
+  if (r.degraded) toast({ head: "SEARCH", body: "Semantic search is unavailable. Showing keyword matches.", kind: "live" });
   Graph && Graph.refresh();
   const hitNodes = rawData.nodes.filter(n => highlightNodes.has(n.id));
   _focusCameraOnNodes(hitNodes);
@@ -483,6 +493,7 @@ async function runSearch() {
     else await _runStandardSearch(q, hyde);
   } catch (e) {
     console.error(skryMode ? "skry failed" : "search failed", e);
+    toast({ head: "SEARCH", body: e.message, kind: "err" });
   }
 }
 
@@ -544,20 +555,15 @@ async function loadGraph() {
   ghost.style.color = "#8b93b8";
   const endpoint = (level === "entity") ? "/api/skein/graph" : `/api/graph?level=${level}`;
   let data;
-  // For chunk/document levels, the server may return 202 if no cache exists yet.
-  if (level === "chunk" || level === "document") {
-    const r = await fetch(endpoint, AUTH);
-    if (r.status === 202) {
-      // Build is in progress; show progress and poll until cache ready.
-      await waitForChunkGraphBuild();
-      data = await api(endpoint);
-    } else if (!r.ok) {
-      throw new Error(endpoint + " → " + r.status);
-    } else {
-      data = await r.json();
-    }
-  } else {
+  const deadline = Date.now() + 30 * 60 * 1000;
+  for (;;) {
     data = await api(endpoint);
+    if (!data.pending) break;
+    if (Date.now() >= deadline) throw new Error("Graph is still building. Reopen the view to check progress.");
+    const state = data.build_state || {};
+    if (state.error) throw new Error(state.error);
+    ghost.textContent = `weaving the bridge · ${state.stage || "queued"} · ${Math.round((state.progress || 0) * 100)}%`;
+    await new Promise(resolve => setTimeout(resolve, 1500));
   }
   rawData = data;
   renderStats(data.stats);
@@ -805,7 +811,7 @@ document.querySelectorAll(".toggle[data-level]").forEach(b => {
     b.classList.add("on");
     level = b.dataset.level;
     hiddenIds.clear(); clearPath();
-    await loadGraph();
+    await loadGraph().catch(showLoadError);
   });
 });
 document.querySelectorAll(".toggle[data-colorby]").forEach(b => {
@@ -831,19 +837,45 @@ document.getElementById("q").addEventListener("keydown", e => {
   else if (e.key === "Escape") { e.target.value = ""; highlightNodes.clear(); Graph && Graph.refresh(); }
 });
 
-if (!TOKEN) {
-  document.getElementById("loading").innerHTML =
-    '<div class="ghost" style="color:#ff6b6b">missing ?token=… in URL</div>';
-} else {
-  loadGraph().catch(err => {
-    document.getElementById("loading").innerHTML =
-      '<div class="ghost" style="color:#ff6b6b">' + err.message + '</div>';
-  });
-  pollSkein();
-  setInterval(pollSkein, 5000);
-  pollGPU();
-  setInterval(pollGPU, 2000);
+let pollingStarted = false;
+function showLoadError(error) {
+  const loading = document.getElementById("loading");
+  loading.style.display = "flex";
+  loading.innerHTML = '<div class="ghost" style="color:#ff6b6b"></div><button id="retry-load">TRY AGAIN</button>';
+  loading.querySelector(".ghost").textContent = error.message;
+  document.getElementById("retry-load").onclick = () => startViewer();
 }
+async function startViewer() {
+  document.getElementById("loading").innerHTML = '<div class="ghost">opening the bridge…</div>';
+  try {
+    await api("/api/health");
+    if (!pollingStarted) {
+      pollingStarted = true;
+      pollSkein(); setInterval(pollSkein, 5000);
+      pollGPU(); setInterval(pollGPU, 2000);
+    }
+    await loadGraph();
+  } catch (error) { showLoadError(error); }
+}
+if (!TOKEN) {
+  document.getElementById("loading").innerHTML = `<form id="sign-in" class="panel">
+    <h2>Open your second brain</h2>
+    <label for="viewer-token">Access token</label>
+    <input id="viewer-token" type="password" autocomplete="off" required />
+    <button type="submit">OPEN BIFRÖST</button>
+    <p>Use the Bifröst Second Brain desktop launcher to sign in automatically.</p>
+    <div id="sign-in-error" role="alert"></div></form>`;
+  document.getElementById("sign-in").onsubmit = async event => {
+    event.preventDefault();
+    TOKEN = document.getElementById("viewer-token").value.trim();
+    AUTH.headers.Authorization = "Bearer " + TOKEN;
+    try {
+      await api("/api/health");
+      await startViewer();
+    } catch (error) { document.getElementById("sign-in-error").textContent = error.message; }
+  };
+} else { startViewer(); }
+
 </script>
 </body>
 </html>

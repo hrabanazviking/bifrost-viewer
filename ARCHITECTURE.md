@@ -172,3 +172,14 @@ loaded.
   endpoint). The loader UX depends on it.
 - The fingerprint scheme. Other caches and external scripts may rely on it.
 - The realm boundaries in `DOMAIN_MAP.md`.
+
+## 2026-09-30 architecture update
+
+Current graph builds run in graph_builder.py subprocesses for both corpus and
+entity layouts. The asynchronous maintenance loop owns recovery independently
+of browser polling. runtime_support.py owns atomic cache publication; local_server.py
+owns loopback plus configured listener sockets. Fingerprint prefix v3 selects sparse
+document neighbors and preserves existing payload fields. Existing cache files are
+kept recoverable. scripts/watch_inbox.py is an optional ingest CLI supervisor,
+with parsing/storage ownership remaining in the private sibling pipeline.
+See INTERFACE.md and docs/operations.md for current contracts and limits.

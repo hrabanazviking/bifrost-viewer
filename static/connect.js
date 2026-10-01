@@ -26,7 +26,9 @@
     try {
       const response = await fetch("/AI_CONNECT.md", {signal: AbortSignal.timeout(10000)});
       if (!response.ok) throw new Error("Guide unavailable; try again later.");
-      download("BIFROST_AI_CONNECT.md", `# Connection handoff\n\nAssigned server: ${base}\n\nUse your individually assigned key from secret settings. This handoff contains no credential.\n\n` + await response.text(), "text/markdown");
+      const guide = (await response.text()).replace(/\]\((SECOND_BRAIN_MANUAL\.md|TECHNICAL_MANUAL\.md|security\/TECHNICAL_MANUAL\.md|clients\/README_AI\.md)\)/g,
+        "](https://github.com/hrabanazviking/bifrost-viewer/blob/main/$1)");
+      download("BIFROST_AI_CONNECT.md", `# Connection handoff\n\nAssigned server: ${base}\n\nUse your individually assigned key from secret settings. This handoff contains no credential.\n\n` + guide, "text/markdown");
       B.message("Downloaded the AI connection guide. Send the assigned key separately and privately.");
     } catch (error) { B.message(error.message, true); }
   };

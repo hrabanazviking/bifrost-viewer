@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import os
+import logging
 import tempfile
 from pathlib import Path
 from typing import Any
 
 import orjson
+
+log = logging.getLogger("bifrost.cache")
 
 
 def atomic_json(path: Path, payload: Any) -> None:
@@ -20,6 +23,12 @@ def atomic_json(path: Path, payload: Any) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         temporary.replace(path)
+        if hasattr(os, "O_DIRECTORY"):
+            descriptor = os.open(path.parent, os.O_DIRECTORY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
     finally:
         if temporary is not None and temporary.exists():
             temporary.unlink()
@@ -35,3 +44,17 @@ def valid_graph(payload: Any, fingerprint: str) -> bool:
         if not isinstance(graph.get("nodes"), list) or not isinstance(graph.get("links"), list):
             return False
     return True
+
+
+def publish_graph(path: Path, payload: Any, prefix: str) -> None:
+    """Reclaim obsolete generated layouts only after a replacement is durable."""
+    atomic_json(path, payload)
+    published = path.stat().st_mtime_ns
+    for old in path.parent.glob(prefix + "*.json"):
+        if old == path:
+            continue
+        try:
+            if old.stat().st_mtime_ns <= published:
+                old.unlink()
+        except OSError:
+            log.warning("Obsolete generated cache retained: %s", old.name)

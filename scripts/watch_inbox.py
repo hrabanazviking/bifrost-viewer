@@ -7,43 +7,45 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import shutil
 import signal
-import subprocess
 import sys
 import time
 import uuid
-import tempfile
+import threading
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+from inbox_child import ChildFailure, run_child  # noqa: E402
+from inbox_state import atomic_json, exclusive_lock, load_state, save_state  # noqa: E402
 
 log = logging.getLogger("ingest.watcher")
 PROJECT = Path(os.getenv("INGEST_PROJECT_DIR", str(Path(__file__).resolve().parents[1] / "ingest"))).expanduser().resolve()
 load_dotenv(Path(os.getenv("INGEST_ENV_FILE", str(PROJECT / ".env"))))
 
 
-def atomic_json(path: Path, payload: dict) -> None:
-    """The supervisor only needs stdlib plus the ingest CLI's dotenv package."""
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(dir=path.parent, mode="w", delete=False) as stream:
-            temporary = Path(stream.name)
-            json.dump(payload, stream)
-            stream.flush()
-            os.fsync(stream.fileno())
-        temporary.replace(path)
-    finally:
-        if temporary is not None and temporary.exists():
-            temporary.unlink()
+DEFAULTS = json.loads(SCRIPT_DIR.joinpath("inbox.defaults.json").read_text())
+
+
+def watch_setting(name: str) -> float:
+    value = float(os.getenv("INGEST_WATCH_" + name.upper(), str(DEFAULTS[name])))
+    minimum = 0 if name == "settle_seconds" else .01
+    if not math.isfinite(value) or value < minimum:
+        raise ValueError("Invalid watcher setting: " + name)
+    return value
 
 
 def read_urls(path: Path) -> list[str] | None:
     suffix = path.suffix.lower()
     if suffix not in (".url", ".urls", ".txt"):
         return None
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = path.read_text(encoding="utf-8")
     lines = [line.strip() for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
     if suffix == ".url":
         lines = [line.split("=", 1)[1].strip() for line in lines if line.upper().startswith("URL=")]
@@ -65,15 +67,22 @@ class InboxWorker:
         for folder in (self.inbox, self.processed, self.failed):
             folder.mkdir(parents=True, exist_ok=True)
         self.state_path = self.inbox / ".watch-state.json"
+        self.health_path = self.inbox / ".watch-health.json"
+        self.state = load_state(self.state_path)
+        self.stop_event = threading.Event()
+        self.health = {}
         try:
-            self.state = json.loads(self.state_path.read_text())
-            if not isinstance(self.state, dict):
-                self.state = {}
+            data = json.loads(self.health_path.read_text())
+            if not isinstance(data, dict):
+                raise ValueError("Health metadata must be an object")
+            retry_at = data.get("dependency_retry_at", 0)
+            if isinstance(retry_at, (int, float)) and math.isfinite(retry_at):
+                self.health["dependency_retry_at"] = min(retry_at, time.time() + watch_setting("retry_max_seconds"))
         except (OSError, ValueError):
-            self.state = {}
-        self.settle = float(os.getenv("INGEST_WATCH_SETTLE_SECONDS", "3"))
-        self.retry_base = float(os.getenv("INGEST_WATCH_RETRY_SECONDS", "30"))
-        self.retry_max = float(os.getenv("INGEST_WATCH_RETRY_MAX_SECONDS", "3600"))
+            pass
+        self.settle = watch_setting("settle_seconds")
+        self.retry_base = watch_setting("retry_seconds")
+        self.retry_max = watch_setting("retry_max_seconds")
 
     def archive(self, path: Path, folder: Path) -> Path:
         destination = folder / path.name
@@ -84,20 +93,39 @@ class InboxWorker:
         return destination
 
     def run_ingest(self, target: str) -> None:
-        result = subprocess.run(
-            [sys.executable, str(self.project / "ingest.py"), "add", target],
-            cwd=self.project, capture_output=True, text=True,
-            timeout=float(os.getenv("INGEST_WATCH_JOB_TIMEOUT", "900")),
-        )
-        if result.returncode:
-            raise RuntimeError(f"ingest exited {result.returncode}: {result.stderr[-1500:]}")
+        self._publish_health("running")
+        env = {**os.environ, "INGEST_PROGRESS_FILE": str(self.inbox / ".watch-job-progress.json")}
+        run_child([sys.executable, str(self.project / "ingest.py"), "add", target],
+                  self.project, watch_setting("job_timeout"), self.stop_event, env=env)
+
+    def _previous_record(self, key: str, signature: list[int]) -> dict:
+        previous = self.state.get(key, {})
+        if previous.get("signature") in (signature, signature[-2:]):
+            return previous
+        return next((value for value in self.state.values() if value.get("signature") == signature), {})
+
+    def _retain_failure(self, path: Path, key: str, signature: list[int], record: dict, exc: Exception) -> None:
+        attempts = record.get("attempts", 0) + 1
+        delay = min(self.retry_max, self.retry_base * 2 ** min(attempts - 1, 16))
+        code = getattr(exc, "code", 21 if isinstance(exc, (UnicodeError, ValueError)) else 20)
+        category = getattr(exc, "category", "input" if code == 21 else "dependency")
+        destination = self.archive(path, self.failed)
+        self.state.pop(key, None)
+        stat = destination.stat()
+        self.state[str(destination.relative_to(self.inbox))] = {
+            **record, "signature": [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns],
+            "attempts": attempts, "retry_at": time.time() + delay, "error": str(exc),
+            "last_exit": code, "error_category": category, "permanent": code == 21,
+        }
+        if code in (20, 22, 124):
+            self.health.update(dependency_retry_at=time.time() + delay, last_error_category=category)
+        log.warning("input %s retained category=%s retry_in=%.0fs: %s", path.name, category, delay, exc)
 
     def process(self, path: Path) -> None:
         key = str(path.relative_to(self.inbox))
         stat = path.stat()
-        signature = [stat.st_size, stat.st_mtime_ns]
-        previous = self.state.get(key, {})
-        record = previous if isinstance(previous, dict) and previous.get("signature") == signature else {}
+        signature = [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns]
+        record = self._previous_record(key, signature)
         if not stat.st_size or time.time() - stat.st_mtime < self.settle:
             return
         if record.get("permanent") or time.time() < record.get("retry_at", 0):
@@ -115,45 +143,62 @@ class InboxWorker:
                 self.run_ingest(target)
                 completed.append(target)
                 self.state[key] = {**record, "signature": signature}
-                atomic_json(self.state_path, self.state)
+                save_state(self.state_path, self.state)
+            fresh = path.stat()
+            if signature != [fresh.st_dev, fresh.st_ino, fresh.st_size, fresh.st_mtime_ns]:
+                raise ChildFailure(20, "Input changed; retain and retry a stable version")
             self.archive(path, self.processed)
             self.state.pop(key, None)
             log.info("ingested %s", path.name)
+        except InterruptedError:
+            self.state[key] = {**record, "signature": signature}
+            log.info("shutdown retained pending input %s", path.name)
         except Exception as exc:
-            attempts = record.get("attempts", 0) + 1
-            delay = min(self.retry_max, self.retry_base * 2 ** min(attempts - 1, 16))
-            destination = self.archive(path, self.failed)
-            self.state.pop(key, None)
-            self.state[str(destination.relative_to(self.inbox))] = {
-                **record, "signature": signature, "attempts": attempts,
-                "retry_at": time.time() + delay, "error": str(exc),
-            }
-            log.warning("input %s failed; retained for retry in %.0fs: %s", path.name, delay, exc)
-        atomic_json(self.state_path, self.state)
+            self._retain_failure(path, key, signature, record, exc)
+        save_state(self.state_path, self.state)
+
+    def _publish_health(self, stage: str) -> None:
+        self.health.update(stage=stage, last_scan_at=time.time(),
+                           pending=sum(p.is_file() and not p.name.startswith(".") for p in self.inbox.iterdir()),
+                           failed=sum(p.is_file() for p in self.failed.iterdir()),
+                           blocked=sum(bool(r.get("permanent")) for r in self.state.values()))
+        atomic_json(self.health_path, self.health)
 
     def scan(self) -> None:
+        if time.time() < self.health.get("dependency_retry_at", 0):
+            self._publish_health("dependency-backoff")
+            return
         for folder in (self.inbox, self.failed):
             for path in sorted(folder.iterdir()):
+                if self.stop_event.is_set():
+                    self._publish_health("stopping")
+                    return
                 if path.is_file() and not path.name.startswith("."):
                     try:
                         self.process(path)
                     except Exception as exc:
                         log.warning("input deferred: %s: %s", path.name, exc)
+                    if time.time() < self.health.get("dependency_retry_at", 0):
+                        self._publish_health("dependency-backoff")
+                        return
+        self._publish_health("idle")
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     worker = InboxWorker(PROJECT, state_dir=Path(os.getenv("INGEST_STATE_DIR", str(PROJECT))).expanduser().resolve())
-    stopping = False
     def stop(signum: int, frame: object) -> None:
-        nonlocal stopping
-        stopping = True
+        worker.stop_event.set()
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     log.info("watching inbox; retry state survives restarts")
-    while not stopping:
-        worker.scan()
-        time.sleep(float(os.getenv("INGEST_WATCH_POLL_SECONDS", "5")))
+    with exclusive_lock(worker.inbox / ".watcher.lock"):
+        while not worker.stop_event.is_set():
+            try:
+                worker.scan()
+            except Exception as exc:
+                log.warning("Inbox scan deferred kind=%s", type(exc).__name__)
+            worker.stop_event.wait(watch_setting("poll_seconds"))
 
 
 if __name__ == "__main__":

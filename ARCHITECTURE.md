@@ -95,7 +95,7 @@ the subprocess:
     5. snap_predicates     — embed text-between-mentions, snap to fixed vocab
     6. persist             — write skein_entities, skein_relations, skein_build
 browser polls /api/skein/status → progress visible
-on completion: skein_graph cache invalidated; next /api/skein/graph rebuilds 3D layout
+on completion: new build-generation cache key; next /api/skein/graph builds the matching 3D layout while previous caches remain available
 ```
 
 ### River of Skry (live entity lookup)
@@ -147,7 +147,8 @@ Every cache file is named with a *fingerprint* that includes the data shape it
 was derived from. For the chunk graph: `graph_v2_<chunk_count>_<max_chunk_id>.json`.
 When ingest adds new chunks, the fingerprint changes; on the next read, the
 old cache is detected as stale and rebuilt. There is exactly one valid cache
-file per kind at any time — others are pruned during build.
+file per kind at any time. Obsolete generated layouts are pruned only after a
+replacement is atomically published; failed computation/writes keep the old files.
 
 If the cache file format ever needs to change incompatibly, bump the version
 prefix (`v2_` → `v3_`). Old caches will be silently ignored and pruned, never
@@ -209,3 +210,19 @@ not the viewer database owner. safe_fetch pins validated public addresses and ch
 every redirect. Local trusted inbox ingestion remains a separate existing supervisor.
 
 Owner UI and protocol details live in security/README_AI.md and security/INTERFACE.md.
+
+## Durable ingestion boundaries
+
+The ingest component owns parsing, embedding validation and atomic source appends.
+Recovery/embedding/diagnostics are separate modules; recovery.json validates and
+bounds retries/deadlines. A fixed target vector dimension is checked before writes.
+The local inbox delegates process lifetime and atomic last-good state to small
+script helpers and reports health/progress in private inbox metadata. The API queue
+uses one file-locked supervisor, sanitized private-log markers and an append-only
+SQL role in a read-only filesystem sandbox. Original revoked clients remain blocked
+even when the owner requests retry. No recovery path changes the source schema.
+
+Skein 0.1.1 holds a cooperative database advisory lock and gates publication on
+discovery coverage. Entity layouts use actual build-generation keys and one
+repeatable-read snapshot. Source counts/IDs remain the underlying corpus fingerprint;
+in-place source changes still require deliberate refresh.

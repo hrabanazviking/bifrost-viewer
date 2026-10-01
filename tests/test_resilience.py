@@ -161,11 +161,11 @@ def test_watcher_uses_source_directory_and_separate_durable_state(monkeypatch, t
     state = tmp_path / "private-state"
     worker = InboxWorker(source, state_dir=state)
     calls = []
-    monkeypatch.setattr(subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs)) or SimpleNamespace(returncode=0))
+    monkeypatch.setattr("scripts.watch_inbox.run_child", lambda command, cwd, timeout, stop, **kwargs: calls.append((command, cwd)))
     worker.run_ingest("test.md")
     assert worker.inbox == state / "inbox"
     assert calls[0][0][1] == str(source / "ingest.py")
-    assert calls[0][1]["cwd"] == source
+    assert calls[0][1] == source
 
 
 def test_viewer_queue_uses_bundled_ingest_and_restricted_configuration(tmp_path, monkeypatch):

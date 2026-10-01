@@ -51,8 +51,32 @@ async function loadOwner() {
   el("mail-mode").value = mail.mode || "starttls"; el("mail-user").value = mail.username || data.email;
   el("mail-sender").value = mail.sender || data.email;
   el("mail-state").textContent = data.mail_configured ? "An SMTP password is saved. Send an email verification code to test delivery." : "No SMTP password is saved; automatic mail delivery needs setup.";
-  await loadKeys(); status("Owner settings unlocked.");
+  await loadKeys(); await loadJobs(); status("Owner settings unlocked.");
 }
+
+async function loadJobs() {
+  const health = await api("/api/admin/ingest/status");
+  const queue = health.api_queue, inbox = health.local_inbox;
+  el("ingest-health").textContent = `API supervisor: ${queue.supervisor_alive ? "running" : "stopped"} · retained jobs ${queue.retained_jobs}/${queue.retained_capacity} · inbox ${inbox.stage || "unknown"}${inbox.progress === undefined ? "" : " " + Math.round(inbox.progress * 100) + "%"}${inbox.failed === undefined ? "" : " · failed files " + inbox.failed}`;
+  const jobs = await api("/api/ingest/jobs"); el("ingest-jobs").replaceChildren();
+  for (const job of jobs) {
+    const row = document.createElement("div"); row.className = "key";
+    const label = document.createElement("span");
+    label.textContent = `${job.job_id} · ${job.status} · ${job.stage} ${Math.round(job.progress * 100)}% · attempts ${job.attempts}${job.error_category ? " · " + job.error_category : ""}`;
+    row.append(label);
+    if (job.status === "failed") {
+      const button = document.createElement("button"); button.textContent = "Retry original job";
+      button.onclick = async () => {
+        button.disabled = true;
+        try { await api(`/api/admin/ingest/jobs/${encodeURIComponent(job.job_id)}/retry`, {}); await loadJobs(); status("Original job requeued. Its existing payload and deduplication identity are preserved."); }
+        catch (error) { status(error.message, true); button.disabled = false; }
+      };
+      row.append(button);
+    }
+    el("ingest-jobs").append(row);
+  }
+}
+el("refresh-jobs").onclick = () => loadJobs().catch(error => status(error.message, true));
 bind("unlock", async () => { token = el("owner-token").value.trim(); await loadOwner(); });
 bind("mail", async () => {
   await api("/api/admin/mail", {host: el("mail-host").value.trim(), port: Number(el("mail-port").value), mode: el("mail-mode").value, username: el("mail-user").value.trim(), sender: el("mail-sender").value.trim(), password: el("mail-password").value});

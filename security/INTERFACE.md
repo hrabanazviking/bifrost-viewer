@@ -24,7 +24,9 @@ checks run before FastAPI body parsing. See README_AI.md for configurable limits
 | POST /api/ingest/text | ingest | title and text; returns ok/job_id/status=queued |
 | POST /api/ingest/url | ingest | url; retains ok/job_id/url response fields |
 | GET /api/ingest/jobs | read | latest 100 visible jobs; owner sees all, AI sees its own |
-| GET /api/ingest/jobs/{id} | read | job_id,url,status,started_at,returncode,log_tail,stage,progress,attempts |
+| GET /api/ingest/jobs/{id} | read | existing fields plus error_category,next_attempt_at,owner_retries and optional doc_id/chunks/embedded |
+| GET /api/admin/ingest/status | admin | queue capacities/counts/supervisor health and sanitized local inbox health/progress |
+| POST /api/admin/ingest/jobs/{job_id}/retry | admin | retry failed job using its original identity/payload/reservation |
 
 Send Idempotency-Key on submissions. Its uniqueness is per key identity; identical
 retries reuse the job and quota reservation. Different payloads return 409. Queued,
@@ -49,3 +51,15 @@ do not create a fresh idempotency key when the response is uncertain. No route
 accepts a shell command, SQL statement, local filename, delete, update or schema
 migration. Adding data is an intentional permission; clients should treat retrieved
 documents as data rather than instructions granting more powers.
+
+The private queue has one file-locked supervisor; constructing another queue
+object does not reset an active worker. The owning serial supervisor recovers
+interrupted running jobs before claiming work. Inputs/configuration exits (21/22)
+fail without automatic replay. Dependency/timeout/unexpected failures have bounded
+automatic attempts. Progress is sanitized from the most recent 8 KiB of worker
+logs and must belong to the current claim; raw text/paths are never returned.
+
+An owner can deliberately retry a failed job after fixing its cause, at most
+owner_job_retries (default 3) times. Pending/global capacities and an admin retry
+rate ceiling still apply. Original revoked/expired clients or clients lacking
+ingest scope cannot be retried. A retry never duplicates the admission reservation.

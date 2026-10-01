@@ -25,6 +25,7 @@
   "worker_log_bytes": 8388608,
   "worker_total_log_bytes": 67108864,
   "job_attempts": 3,
+  "owner_job_retries": 3,
   "retry_seconds": 30,
   "recovery_seconds": 900,
   "challenge_requests_per_hour": 3,

@@ -30,3 +30,9 @@ VIEWER_API_INGEST_ENV_FILE selects the separate append-only configuration for
 HTTP workers. Their environment is allowlisted and their filesystem/processes
 are isolated with Bubblewrap. INGEST_ENV_FILE selects trusted local CLI configuration.
 The watcher separately uses INGEST_PROJECT_DIR and INGEST_STATE_DIR.
+
+Ingestion worker stages/exit/retry contracts are documented in ingest/INTERFACE.md
+and security/INTERFACE.md. Owner diagnostics/retry routes are scoped admin-only.
+Entity layouts use v2_build<build-id>_<source-fingerprint> keys. Each entity/edge
+read uses one repeatable-read snapshot and rejects a changed generation. Starting
+a Skein rebuild retains the previous cached layouts until successful replacement.

@@ -130,7 +130,9 @@ def test_queue_capacity_and_restart_and_owner_isolation(queue, store):
     with store.transaction() as db:
         db.execute("UPDATE jobs SET status='running'")
     restarted = IngestQueue(store, queue.project, queue.env_file)
-    assert restarted.states(client, job["job_id"])[0]["status"] == "queued"
+    assert restarted.states(client, job["job_id"])[0]["status"] == "running"
+    assert restarted._claim()["id"] == job["job_id"]
+    assert restarted.states(client, job["job_id"])[0]["status"] == "running"
     assert isinstance(restarted.states(client, job["job_id"])[0]["started_at"], str)
     assert restarted.states(principal(store), job["job_id"]) == []
 

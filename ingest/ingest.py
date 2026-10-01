@@ -10,9 +10,11 @@ Usage:
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 import os
-import numpy as np
-import time
+import re
+import sys
 from pathlib import Path
 
 import httpx
@@ -24,54 +26,44 @@ from psycopg.types.json import Jsonb
 from rich.console import Console
 from rich.table import Table
 
+MODULE_DIR = Path(__file__).resolve().parent
+if str(MODULE_DIR) not in sys.path:
+    sys.path.insert(0, str(MODULE_DIR))
+from embedding import embed_all  # noqa: E402
+from recovery import (  # noqa: E402
+    ConfigurationFailure, InputFailure, check_source, database_retry,
+    failure, progress, required, setting, source_signature,
+)
+
 load_dotenv(Path(os.getenv("INGEST_ENV_FILE", str(Path(__file__).parent / ".env"))))
 
-DB_URL = os.environ["INGEST_DB_URL"]
-OLLAMA_URL = os.environ["OLLAMA_URL"]
-EMBED_MODEL = os.environ["INGEST_EMBED_MODEL"]
-CHUNK_CHARS = int(os.environ.get("INGEST_CHUNK_CHARS", 2000))
-CHUNK_OVERLAP = int(os.environ.get("INGEST_CHUNK_OVERLAP", 200))
+DB_URL = os.environ.get("INGEST_DB_URL", "")
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "")
+EMBED_MODEL = os.environ.get("INGEST_EMBED_MODEL", "")
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console()
 
 
 def get_conn() -> psycopg.Connection:
-    conn = psycopg.connect(DB_URL, connect_timeout=int(os.getenv("INGEST_DB_CONNECT_TIMEOUT", "5")))
-    register_vector(conn)
+    required(DB_URL, OLLAMA_URL, EMBED_MODEL)
+    options = f"-c statement_timeout={setting('db_statement_timeout_ms')} -c lock_timeout={setting('db_lock_timeout_ms')}"
+    conn = psycopg.connect(DB_URL, connect_timeout=setting("db_connect_timeout"), options=options)
+    try:
+        register_vector(conn)
+        conn.commit()  # finish type discovery before caller's read-only snapshot
+    except Exception:
+        conn.close()
+        raise
     return conn
 
 
 def embed(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
-    batch_size = max(1, int(os.getenv("INGEST_EMBED_BATCH_SIZE", "32")))
-    embeddings = []
-    dimension = None
+    required(DB_URL, OLLAMA_URL, EMBED_MODEL)
     with httpx.Client() as client:
-        for start in range(0, len(texts), batch_size):
-            batch = texts[start:start + batch_size]
-            for attempt in range(3):
-                try:
-                    response = client.post(f"{OLLAMA_URL}/api/embed", json={"model": EMBED_MODEL, "input": batch}, timeout=300)
-                    response.raise_for_status()
-                    vectors = np.asarray(response.json().get("embeddings"), dtype=np.float32)
-                    if vectors.ndim != 2 or len(vectors) != len(batch) or not vectors.shape[1]:
-                        raise ValueError("embedding response has an incomplete batch")
-                    if not np.isfinite(vectors).all() or not np.all(np.any(vectors, axis=1)):
-                        raise ValueError("embedding response contains invalid vectors")
-                    if dimension is not None and vectors.shape[1] != dimension:
-                        raise ValueError("embedding dimensions changed between batches")
-                    dimension = vectors.shape[1]
-                    embeddings.extend(vectors.tolist())
-                    break
-                except httpx.HTTPError as exc:
-                    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code not in (408, 429) and exc.response.status_code < 500:
-                        raise
-                    if attempt == 2:
-                        raise
-                    time.sleep(2 ** attempt)
-    return embeddings
+        return embed_all(client, OLLAMA_URL, EMBED_MODEL, texts)
 
 
 def _jsonl_record_to_text(rec) -> str:
@@ -134,84 +126,138 @@ def parse_source(src: str) -> tuple[str, str, list[str]]:
         title = p.name
         content_type = p.suffix.lstrip(".") or "unknown"
         if p.suffix.lower() == ".txt" and os.getenv("INGEST_API_JOB_ID"):
-            from unstructured.documents.elements import Text
-            elements = [Text(text=p.read_text(encoding="utf-8"))]
+            return title, content_type, _text_chunks(p.read_text(encoding="utf-8"))
         elif p.suffix.lower() == ".json":
             import json
             from unstructured.documents.elements import Text
             data = json.loads(p.read_text(encoding="utf-8"))
             elements = [Text(text=json.dumps(data, indent=2, ensure_ascii=False))]
         elif p.suffix.lower() == ".jsonl":
-            import json
-            from unstructured.documents.elements import Text
-            elements = []
-            for ln, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                elements.append(Text(text=_jsonl_record_to_text(rec)))
+            elements = _jsonl_elements(p)
         else:
             from unstructured.partition.auto import partition
             elements = partition(filename=str(p))
 
     from unstructured.chunking.basic import chunk_elements
+    chunk_chars, overlap = setting("chunk_chars"), setting("chunk_overlap")
+    if overlap >= chunk_chars:
+        raise ConfigurationFailure("Chunk overlap must be smaller than chunk size")
     chunks = chunk_elements(
         elements,
-        max_characters=CHUNK_CHARS,
-        new_after_n_chars=int(CHUNK_CHARS * 0.75),
-        overlap=CHUNK_OVERLAP,
+        max_characters=chunk_chars,
+        new_after_n_chars=int(chunk_chars * 0.75),
+        overlap=overlap,
     )
     return title, content_type, [str(c) for c in chunks if str(c).strip()]
 
 
-@app.command()
-def add(source: str) -> None:
-    """Ingest a file path or URL."""
-    console.print(f"[bold cyan]Ingesting:[/] {source}")
-    title, content_type, texts = parse_source(source)
-    if not texts:
-        console.print("[red]No content extracted[/]")
-        raise typer.Exit(1)
-    if os.getenv("INGEST_API_JOB_ID") and os.getenv("INGEST_SUBMISSION_TITLE"):
-        title = os.environ["INGEST_SUBMISSION_TITLE"]
+def _text_chunks(text: str) -> list[str]:
+    """API text is already extracted: preserve its characters and whitespace."""
+    maximum, overlap = setting("chunk_chars"), setting("chunk_overlap")
+    if overlap >= maximum:
+        raise ConfigurationFailure("Chunk overlap must be smaller than chunk size")
+    if not text.strip():
+        return []
+    chunks = []
+    for start in range(0, len(text), maximum - overlap):
+        chunk = text[start:start + maximum]
+        chunks.append(chunk)
+        if start + maximum >= len(text):
+            break
+    return chunks
+
+
+def _jsonl_elements(path: Path) -> list:
+    from unstructured.documents.elements import Text
+    elements = []
+    with path.open(encoding="utf-8") as stream:
+        for line_number, line in enumerate(stream, 1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                raise InputFailure(f"Malformed JSONL at line {line_number}; no records inserted") from None
+            elements.append(Text(text=_jsonl_record_to_text(record)))
+    return elements
+
+
+def _existing_document(content_hash: str) -> int | None:
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id FROM documents WHERE hash = %s", (content_hash,))
+        existing = cur.fetchone()
+        return existing[0] if existing else None
+
+
+def _target_dimension() -> int:
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT format_type(atttypid,atttypmod) FROM pg_attribute WHERE attrelid=to_regclass('public.chunks') AND attname='embedding' AND NOT attisdropped")
+        row = cur.fetchone()
+    match = re.fullmatch(r"vector\((\d+)\)", row[0]) if row else None
+    if not match:
+        raise ConfigurationFailure("Configure a fixed-dimension public.chunks embedding column first")
+    return int(match[1])
+
+
+def _record(source: str, title: str, content_type: str, content_hash: str) -> tuple:
     metadata = {}
     if os.getenv("INGEST_API_JOB_ID"):
         metadata = {"api_job_id": os.environ["INGEST_API_JOB_ID"], "api_client_id": os.environ["INGEST_API_CLIENT_ID"]}
+        title = os.getenv("INGEST_SUBMISSION_TITLE") or title
         if not source.startswith(("https://", "http://")):
             source = f"bifrost-api://{metadata['api_client_id']}/{metadata['api_job_id']}"
-    console.print(f"  parsed → {len(texts)} chunks")
+    return source, title, content_type, content_hash, Jsonb(metadata)
 
-    h = hashlib.sha256("\n".join(texts).encode("utf-8")).hexdigest()
-    # Avoid holding database locks while the model computes a whole document.
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id FROM documents WHERE hash = %s", (h,))
-        existing = cur.fetchone()
-        if existing:
-            console.print(f"[yellow]Already ingested as doc_id={existing[0]} (hash match)[/]")
-            return
-    console.print(f"  embedding {len(texts)} chunks…")
-    embeddings = embed(texts)
+
+def _persist(record: tuple, texts: list[str], embeddings: list[list[float]]) -> int:
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             "INSERT INTO documents (source, title, content_type, hash, metadata) VALUES (%s, %s, %s, %s, %s) "
             "ON CONFLICT (hash) DO NOTHING RETURNING id",
-            (source, title, content_type, h, Jsonb(metadata)),
+            record,
         )
         inserted = cur.fetchone()
         if inserted is None:
-            console.print("[yellow]Already ingested by another worker (hash match)[/]")
-            return
+            cur.execute("SELECT id FROM documents WHERE hash=%s", (record[3],))
+            return cur.fetchone()[0]
         doc_id = inserted[0]
         cur.executemany(
             "INSERT INTO chunks (document_id, chunk_index, text, embedding) VALUES (%s, %s, %s, %s)",
             [(doc_id, i, text, embedding) for i, (text, embedding) in enumerate(zip(texts, embeddings, strict=True))],
         )
         conn.commit()
-    console.print(f"[green]✓[/] doc_id={doc_id}  {len(texts)} chunks indexed")
+    return doc_id
+
+
+@app.command()
+def add(source: str) -> None:
+    """Ingest a stable file or public URL with atomic, idempotent DB retries."""
+    required(DB_URL, OLLAMA_URL, EMBED_MODEL)
+    signature = source_signature(source)
+    progress("parsing", .05)
+    title, content_type, texts = parse_source(source)
+    check_source(source, signature)
+    if not texts:
+        raise InputFailure("No content extracted; source retained")
+    if any("\x00" in text for text in texts):
+        raise InputFailure("Parsed text contains NUL; correct source encoding")
+    progress("validating", .15, chunks=len(texts))
+    content_hash = hashlib.sha256("\n".join(texts).encode("utf-8")).hexdigest()
+    existing = database_retry(lambda: _existing_document(content_hash))
+    if existing is not None:
+        progress("done", 1., doc_id=existing, chunks=len(texts))
+        console.print(f"Already ingested as doc_id={existing} (hash match)")
+        return
+    dimension = database_retry(_target_dimension)
+    embeddings = embed(texts)
+    if any(len(vector) != dimension for vector in embeddings):
+        raise ConfigurationFailure("Embedding model dimension differs from target database")
+    check_source(source, signature)
+    progress("persisting", .9, chunks=len(texts))
+    record = _record(source, title, content_type, content_hash)
+    doc_id = database_retry(lambda: _persist(record, texts, embeddings))
+    progress("done", 1., doc_id=doc_id, chunks=len(texts))
+    console.print(f"Indexed doc_id={doc_id}; chunks={len(texts)}")
 
 
 @app.command()
@@ -288,6 +334,19 @@ def stats() -> None:
         console.print(t)
 
 
+@app.command()
+def doctor(json_output: bool = typer.Option(False, "--json")) -> None:
+    """Read-only schema/corpus invariants; reports problems without changing data."""
+    from diagnostics import inspect_database
+    result = database_retry(lambda: inspect_database(get_conn))
+    if json_output:
+        sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
+    else:
+        console.print(result)
+    if not result["ok"]:
+        raise typer.Exit(21)
+
+
 @app.command("list")
 def list_docs(limit: int = 20) -> None:
     """List recently ingested documents."""
@@ -315,5 +374,17 @@ def delete(doc_id: int) -> None:
     console.print(f"[green]✓[/] deleted doc_id={doc_id}")
 
 
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    try:
+        app()
+    except Exception as exc:
+        code, category = failure(exc)
+        progress("failed", 0., error_category=category)
+        message = str(exc) if isinstance(exc, (InputFailure, ConfigurationFailure)) else type(exc).__name__
+        logging.getLogger("ingest").error("Ingestion failed category=%s detail=%s", category, message)
+        raise SystemExit(code) from None
+
+
 if __name__ == "__main__":
-    app()
+    main()

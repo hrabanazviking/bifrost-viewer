@@ -11,3 +11,8 @@ dependencies out of the viewer process. Tests mock DB/model boundaries.
 INGEST_ENV_FILE selects private configuration; INGEST_STATE_DIR selects durable
 inbox storage for scripts/watch_inbox.py. Neither belongs in Git. Legacy local
 entry points may forward here. Read INTERFACE.md before changing CLI contracts.
+
+Recovery settings/protocol live in recovery.json/recovery.py; embedding.py owns
+ordered adaptive batches and vector validation; diagnostics.py owns the read-only
+doctor. Add does not migrate schema or repair source content. Source stability,
+model dimension and strict JSONL validation precede atomic source insertion.

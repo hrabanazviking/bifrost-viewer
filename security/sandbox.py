@@ -23,7 +23,8 @@ def command(project: Path, env_file: Path, payload: Path | None, limits_file: Pa
             "--die-with-parent", "--new-session", "--cap-drop", "ALL"]
     # Mount individual application files; never mount the project .env or home.
     paths = [Path("/usr"), Path("/lib"), Path("/lib64"), runtime, project / ".venv",
-             project / "ingest.py", project / "safe_fetch.py"]
+             project / "ingest.py", project / "safe_fetch.py", project / "embedding.py",
+             project / "recovery.py", project / "recovery.json", project / "diagnostics.py"]
     paths += [Path(value) for value in ["/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf",
               "/etc/passwd", "/etc/group", "/etc/localtime", "/etc/ld.so.cache", "/etc/ssl/certs"]]
     for path in dict.fromkeys(paths):

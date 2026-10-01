@@ -1,0 +1,15 @@
+{
+  "chunk_chars": 2000,
+  "chunk_overlap": 200,
+  "embed_batch_size": 32,
+  "embed_attempts": 3,
+  "embed_request_budget": 24,
+  "embed_timeout_seconds": 120,
+  "db_attempts": 3,
+  "db_connect_timeout": 5,
+  "db_statement_timeout_ms": 15000,
+  "db_lock_timeout_ms": 5000,
+  "retry_base_seconds": 1,
+  "retry_max_seconds": 8,
+  "progress_stages": ["parsing", "validating", "embedding", "persisting", "done", "failed"]
+}

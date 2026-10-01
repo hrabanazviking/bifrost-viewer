@@ -230,3 +230,8 @@ Source updates do not back up the database. Never publish `.env`, private securi
 state, retained inbox data or credential-bearing logs. For implementation contracts
 and maintenance constraints, see [INTERFACE.md](INTERFACE.md),
 [PROJECT_LAWS.md](PROJECT_LAWS.md) and [docs/operations.md](docs/operations.md).
+
+Generated graph/entity layouts are reclaimed only after a replacement has been
+atomically published and flushed. Failed builds retain previous cached files.
+Cleanup only touches the same generated-layout prefix and preserves status files
+and concurrently published newer layouts.

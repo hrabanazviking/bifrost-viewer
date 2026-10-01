@@ -22,6 +22,8 @@ POST /api/ingest/url                queue a bounded URL ingest job
 POST /api/ingest/text               queue a bounded text document
 GET  /api/ingest/jobs               list retained ingest jobs visible to this key
 GET  /api/ingest/jobs/{id}          status of a specific URL ingest job
+GET  /api/admin/ingest/status       owner queue and inbox recovery diagnostics
+POST /api/admin/ingest/jobs/{job_id}/retry  bounded owner retry of retained failure
 GET  /api/gpu                       nvidia-smi snapshot (cached 1.5 s)
 GET  /api/kg/status                 legacy llama-per-chunk batch progress (kept for comparison)
 POST /api/refresh                   invalidate caches; equivalent to POST /api/graph/build
@@ -354,9 +356,9 @@ def _load_chunk_rows() -> list[tuple]:
 
 def _normalize_unit(embeddings: np.ndarray) -> np.ndarray:
     """L2-normalize each row of `embeddings` so dot product == cosine sim."""
-    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    norms = np.linalg.norm(embeddings.astype(np.float64), axis=1, keepdims=True)
     norms[norms == 0] = 1.0
-    return embeddings / norms
+    return (embeddings / norms).astype(np.float32)
 
 
 def _project_umap_3d(embeddings: np.ndarray, n: int) -> np.ndarray:
@@ -1098,35 +1100,32 @@ def skein_build(_=Depends(require_token)):
         if p is not None and p.poll() is None:
             return orj({"ok": False, "reason": "already running",
                         "started_at": _skein_build_proc["started_at"]})
-        log_file = open(log_path, "w")
-        new = subprocess.Popen(
-            ["uv", "run", "skein", "build"],
-            cwd=str(SKEIN_DIR),
-            stdout=log_file, stderr=subprocess.STDOUT,
-        )
-        log_file.close()   # parent's dup; subprocess has its own — see docs/bugs/0007
+        with open(log_path, "w") as log_file:
+            new = subprocess.Popen(
+                ["uv", "run", "skein", "build"],
+                cwd=str(SKEIN_DIR),
+                stdout=log_file, stderr=subprocess.STDOUT,
+            )
         _skein_build_proc.update({
             "proc": new, "started_at": datetime.datetime.now().isoformat(),
             "log_path": str(log_path),
         })
-    for old in CACHE_DIR.glob("skein_graph_*.json"):
-        try:
-            old.unlink()
-        except OSError:
-            pass
     log.info("started skein build pid=%s log=%s", new.pid, log_path)
     return orj({"ok": True, "pid": new.pid, "log": str(log_path)})
 
 
 def _skein_fingerprint(cur) -> str | None:
-    cur.execute("SELECT fingerprint FROM skein_build ORDER BY id DESC LIMIT 1")
+    cur.execute("SELECT id,fingerprint FROM skein_build ORDER BY id DESC LIMIT 1")
     r = cur.fetchone()
-    return r[0] if r else None
+    return f"v2_build{r[0]}_{r[1]}" if r else None
 
 
 def _build_skein_graph(fp: str) -> dict:
     import umap
     with db_conn() as conn, conn.cursor() as cur:
+        cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        if (_skein_fingerprint(cur) or "noversion") != fp:
+            raise RuntimeError("Entity build generation changed; retry current layout")
         cur.execute("SELECT id, name, kind, mentions, embedding FROM skein_entities ORDER BY id")
         ents = cur.fetchall()
         cur.execute("SELECT subject_id, object_id, predicate, sim, evidence_chunk_ids FROM skein_relations")
@@ -1282,6 +1281,34 @@ def ingest_job_status(job_id: str, principal=Depends(require_token)):
 @safely("ingest_jobs_list")
 def ingest_jobs_list(principal=Depends(require_token)):
     return orj(get_ingest_queue().states(principal))
+
+
+@app.post("/api/admin/ingest/jobs/{job_id}/retry")
+@safely("ingest_owner_retry")
+def retry_ingest_job(job_id: str, _=Depends(require_token)):
+    store = get_security()
+    store.spend("owner-ingest-retry", str(int(time.time() // 60)), store.limits["ai_writes_per_minute"])
+    return orj(get_ingest_queue().retry(job_id))
+
+
+@app.get("/api/admin/ingest/status")
+@safely("ingest_diagnostics")
+def ingest_diagnostics(_=Depends(require_token)):
+    configured = os.getenv("INGEST_STATE_DIR")
+    default = Path(os.environ["INGEST_ENV_FILE"]).parent if os.getenv("INGEST_ENV_FILE") else INGEST_DIR
+    path = Path(configured) if configured else default
+    inbox = {"stage": "unavailable"}
+    try:
+        data = orjson.loads((path / "inbox/.watch-health.json").read_bytes())
+        if isinstance(data, dict):
+            inbox = {key: data[key] for key in ("stage", "last_scan_at", "dependency_retry_at", "last_error_category", "pending", "failed", "blocked") if key in data}
+            if inbox.get("stage") == "running":
+                from security.job_state import decoded_progress
+                raw = (path / "inbox/.watch-job-progress.json").read_text()
+                inbox.update(decoded_progress(raw, inbox.get("last_scan_at", 0)))
+    except (OSError, ValueError):
+        pass
+    return orj({"api_queue": get_ingest_queue().snapshot(), "local_inbox": inbox})
 
 
 # ─── GPU gauge ──────────────────────────────────────────────────────────────

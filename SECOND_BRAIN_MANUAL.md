@@ -412,3 +412,20 @@ mail-account policy, exhausted disk or an unsupported sandbox by itself.
 - [HTTP contracts](INTERFACE.md) and [security contracts](security/INTERFACE.md)
 - [Architecture](ARCHITECTURE.md), [domain ownership](DOMAIN_MAP.md),
   [data flow](DATA_FLOW.md), [development log](DEVLOG.md)
+
+## 14. Ingestion and build recovery added 2026-10-01
+
+The Security page now has an **Ingestion recovery** panel. Refresh to inspect
+API jobs, progress, error categories and inbox cooldown. After correcting a failed
+job's cause, the owner can retry its original payload up to three times; revoked
+clients remain blocked. See the [ingest recovery instructions](ingest/TECHNICAL_MANUAL.md#10-read-only-diagnosis-and-recovery-decisions)
+and [owner recovery details](security/TECHNICAL_MANUAL.md#11-owner-ingestion-recovery).
+The source doctor checks counts/vector/chunk integrity without changing data.
+
+Skein 0.1.1 serializes builds with a database advisory lock. A malformed vocabulary
+response counts as failed discovery; by default more than 10% failed documents
+aborts publication and keeps the previous graph. The threshold is configurable.
+A valid empty vocabulary for a document is allowed. Bifröst's entity cache tracks
+the actual build generation, so another build of the same corpus receives its own
+layout. Read the [Skein manual](../skein-kg/TECHNICAL_MANUAL.md) before changing
+coverage thresholds or forcing a build.

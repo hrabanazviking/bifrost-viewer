@@ -234,3 +234,22 @@ sandbox limitations. Added README navigation and corrected stale launcher-access
 notes. Source/CLI contracts and local service/GPU state were inspected; documentation
 links, examples and diffs were checked. No runtime code, source rows, configuration,
 credentials or services were changed by this documentation task.
+
+## 2026-10-01 — ingestion and build self-healing
+
+Implemented the committed recovery task brief. Strengthened domain boundaries,
+classified failures and bounded retries; preserved original source data and private
+configuration. Updated technical/manual contracts and failure-oriented regression
+coverage. Bifröst additionally proves exact Unicode payload mounting/replay and
+append-only privileges against an isolated PostgreSQL database and real Ollama.
+Production source integrity is checked with the read-only ingest doctor. See the
+recovery task brief and technical manual for behavior and operating limits.
+
+Verification: 89 viewer/integration checks, 19 parser checks, 47 Skein checks.
+Deployed services are healthy; the live read-only doctor preserves the 1,237
+document / 49,006 chunk baseline with all checked invariants passing. Corrected
+one historical sandbox canary's false-success queue state while preserving its
+source row/payload and revoked-key boundary.
+
+Generated-layout cleanup follows successful atomic publication, preserving old
+layouts on a failed replacement. Two regressions verify that boundary.

@@ -26,7 +26,7 @@ sys.path.insert(0, str(PROJECT))
 
 # Import shared build logic from the viewer module
 from viewer import build_graph, cache_path, CACHE_DIR  # noqa: E402
-from runtime_support import atomic_json  # noqa: E402
+from runtime_support import atomic_json, publish_graph  # noqa: E402
 
 # docs/bugs/0011: structured logging via `logging` module — never `print()`.
 logging.basicConfig(
@@ -80,22 +80,8 @@ def main() -> int:
         write_status(fp, stage=stage, progress=float(frac))
 
     try:
-        if entity:
-            from viewer import _build_skein_graph
-            target = CACHE_DIR / f"skein_graph_{source_fp}.json"
-            progress("projecting entities", 0.1)
-            g = _build_skein_graph(source_fp)
-            from viewer import db_conn, _skein_fingerprint
-            with db_conn() as conn, conn.cursor() as cur:
-                if (_skein_fingerprint(cur) or "noversion") != source_fp:
-                    raise RuntimeError("entity graph changed during layout; retry its new fingerprint")
-        else:
-            from viewer import fingerprint
-            target = cache_path(fp)
-            g = build_graph(fp, progress=progress)
-            if fingerprint() != fp:
-                raise RuntimeError("corpus changed during build; will retry with its new fingerprint")
-        atomic_json(target, g)
+        target, g = _compute_graph(source_fp, entity, progress)
+        publish_graph(target, g, "skein_graph_" if entity else "graph_")
 
         write_status(fp, running=False, stage="done", progress=1.0,
                      finished_at=datetime.datetime.now().isoformat(),
@@ -112,6 +98,24 @@ def main() -> int:
     finally:
         from viewer import close_pool
         close_pool()
+
+
+def _compute_graph(source_fp: str, entity: bool, progress) -> tuple[Path, dict]:
+    if entity:
+        from viewer import _build_skein_graph, db_conn, _skein_fingerprint
+        target = CACHE_DIR / f"skein_graph_{source_fp}.json"
+        progress("projecting entities", 0.1)
+        graph = _build_skein_graph(source_fp)
+        with db_conn() as conn, conn.cursor() as cur:
+            if (_skein_fingerprint(cur) or "noversion") != source_fp:
+                raise RuntimeError("entity graph changed during layout; retry its new fingerprint")
+    else:
+        from viewer import fingerprint
+        target = cache_path(source_fp)
+        graph = build_graph(source_fp, progress=progress)
+        if fingerprint() != source_fp:
+            raise RuntimeError("corpus changed during build; will retry with its new fingerprint")
+    return target, graph
 
 
 if __name__ == "__main__":

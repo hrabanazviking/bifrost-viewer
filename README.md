@@ -49,6 +49,7 @@ same database, each with one job:
 - **Semantic path-finder** — shift+click any two chunks to render the shortest similarity-graph path between them.
 - **LLM cluster naming** — HDBSCAN topic clusters, named on-demand by a local llama.
 - **GPU gauge** — live nvidia-smi readout in the corner so you can watch utilization, VRAM, temp, and power as builds run.
+- **Recoverable ingestion** — strict input validation, ordered adaptive embeddings, idempotent SQL retries, last-good inbox state, process deadlines and an owner recovery panel.
 - **Safe AI access and ingestion** — issue expiring read/append keys; a durable bounded queue adds text or public web URLs using an append-only database role.
 - **Owner recovery** — verify a configurable email address and exchange a short-lived, single-use emailed code for a replacement owner credential. TLS SMTP settings stay private.
 - **Async builds** — heavy graph rebuilds run in a subprocess so the server stays responsive. The loader shows live stage + progress; no silent hangs.
@@ -147,6 +148,8 @@ GET  /api/skein/graph               entity graph (3D-ready)
 GET  /api/skry?q=…                  query-time entity neighborhood
 POST /api/ingest/url                start a URL ingest job
 GET  /api/ingest/jobs/{job_id}      job status
+GET  /api/admin/ingest/status       owner ingestion diagnostics
+POST /api/admin/ingest/jobs/{job_id}/retry  bounded owner retry
 GET  /api/gpu                       nvidia-smi snapshot
 ```
 

@@ -176,7 +176,10 @@ Poll every 5–10 seconds with a finite deadline rather than a tight loop. Statu
 are `queued`, `running`, `ok`, `failed`; responses also include stage, progress,
 attempts and compatible `started_at`/return-code fields. Owner job listing sees all;
 a delegated identity sees only its own jobs, with the latest 100 in the list.
-Raw worker logs are private and are not returned to that AI.
+Raw worker logs are private and are not returned to that AI. Live stage markers
+cover parsing, validation, embedding and persistence; status also reports
+`error_category`, `next_attempt_at`, `owner_retries` and optional integer
+`doc_id`/`chunks`/`embedded`. Stale markers from previous attempts are ignored.
 
 ### Idempotency and retries
 
@@ -324,3 +327,22 @@ Follow [stack backup/restore](../SECOND_BRAIN_MANUAL.md#back-up-and-verify).
 Inspect `journalctl --user -u bifrost.service` locally, without uploading secrets
 or raw knowledge. Validate changes with `uv run --frozen pytest -q` from the root.
 The exact HTTP contracts are recorded in [INTERFACE.md](INTERFACE.md).
+
+## 11. Owner ingestion recovery
+
+Unlock `/security`, then use **Ingestion recovery → Refresh ingestion status**.
+The panel shows the queue supervisor, retained-job budget, local inbox stage and
+job attempts/progress. A failed job shows its category. Correct the actual input,
+model, SQL configuration or dependency first. **Retry original job** calls the
+owner-only retry route without replacing its original payload, client or quota
+reservation. A client which has expired or been revoked remains blocked. There
+are at most three deliberate owner retries per job by default, in addition to
+bounded automatic temporary-failure attempts. Retrying a successful, queued or
+running job is refused. Retained payload/log ceilings continue to apply.
+
+`GET /api/admin/ingest/status` returns aggregate queue counts/budgets and sanitized
+local inbox health. `POST /api/admin/ingest/jobs/JOB_ID/retry` accepts an empty
+JSON object using the owner bearer header. Read/append AI keys cannot call either
+route. API job status remains limited to its own identity. See the
+[ingest manual](../ingest/TECHNICAL_MANUAL.md#10-read-only-diagnosis-and-recovery-decisions)
+for CLI exit classes and the read-only database doctor.

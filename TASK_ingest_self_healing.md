@@ -46,3 +46,34 @@ atomic document/chunk insertion, restricted SQL role and payload/rate ceilings
 remain intact. Test inputs belong in an isolated database; preserve real inputs,
 credentials and source rows. Do not run a costly full live Skein build for testing.
 Back up private state and record source counts before service deployment.
+
+## Verification and deployment
+
+Completed the owning-domain changes and updated component/interface/architecture
+manuals. Default viewer tests pass (85; four opt-in integration checks skipped);
+with the dedicated test DB all 89 pass. The separate parser suite passes 19 checks.
+Skein 0.1.1 passes 47 checks. Live integration uses actual Bubblewrap, PostgreSQL
+and Ollama: exact Unicode/newline payload and server provenance, idempotent replay,
+forbidden UPDATE/DELETE/schema alteration, all-or-nothing malformed JSONL, and
+shared Skein build exclusion. Ruff, JavaScript syntax and diff checks pass.
+
+Backed up private state before stopping services. Deployed/restarted Bifröst and
+the inbox watcher; health reports DB/Ollama/cached graph ready, API supervisor
+running, inbox idle with no failed files. The read-only doctor reports 1,237
+documents and 49,006 chunks, zero missing/zero vectors, orphans, empty documents
+or broken chunk sequences. Source counts/IDs are unchanged from the baseline.
+
+Historical audit found one old diagnostic sandbox canary falsely marked successful
+with different stored text. Marked only its private queue result failed with
+historical_payload_mismatch; preserved original source/payload and the revoked
+test key policy. Another duplicate canary is correctly present under its original
+source provenance. No source deletion or synthetic repair was performed.
+
+Integration data and its restricted role live only in a separately named test
+database; private configuration is outside Git. No full production Skein rebuild
+was run merely to test recovery. Cooperative build locks require upgraded builders;
+source content mistakes/corruption require owner-reviewed correction rather than
+automatically invented knowledge.
+
+Generated-layout cleanup follows successful atomic publication, preserving old
+layouts on a failed replacement. Two regressions verify that boundary.

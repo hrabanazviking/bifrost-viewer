@@ -1,0 +1,7 @@
+{
+  "poll_seconds": 5,
+  "settle_seconds": 3,
+  "retry_seconds": 30,
+  "retry_max_seconds": 3600,
+  "job_timeout": 900
+}

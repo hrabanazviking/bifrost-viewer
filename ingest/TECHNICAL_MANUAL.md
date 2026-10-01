@@ -32,8 +32,8 @@ The exported path is for the existing installation. For a fresh installation,
 copy `ingest/.env.example` to a chosen private file and point `INGEST_ENV_FILE`
 there. Restrict it to `0600`. Do not replace the current private `.env` by copying
 the example over it. Existing process environment takes precedence over dotenv.
-The viewer's root `.env` is not loaded automatically by this CLI; even `--help`
-needs required ingest settings because configuration is read at module startup.
+The viewer's root `.env` is not loaded automatically by this CLI. `--help` works
+without credentials; commands validate their configuration when executed.
 
 | Variable | Default/example | Meaning |
 |---|---|---|
@@ -44,6 +44,15 @@ needs required ingest settings because configuration is read at module startup.
 | `INGEST_CHUNK_OVERLAP` | `200` | Overlap between neighboring chunks |
 | `INGEST_DB_CONNECT_TIMEOUT` | `5` | Connection timeout in seconds |
 | `INGEST_EMBED_BATCH_SIZE` | `32` | Embedding batch size |
+| `INGEST_EMBED_ATTEMPTS` | `3` | Attempts per model request |
+| `INGEST_EMBED_REQUEST_BUDGET` | `24` | Maximum requests in one adaptive batch tree |
+| `INGEST_EMBED_TIMEOUT_SECONDS` | `120` | Model request deadline |
+| `INGEST_DB_ATTEMPTS` | `3` | Attempts per transient database operation |
+| `INGEST_DB_STATEMENT_TIMEOUT_MS` | `15000` | SQL deadline |
+| `INGEST_DB_LOCK_TIMEOUT_MS` | `5000` | SQL lock-wait deadline |
+| `INGEST_RETRY_BASE_SECONDS` | `1` | In-process retry backoff base |
+| `INGEST_RETRY_MAX_SECONDS` | `8` | In-process retry backoff ceiling |
+| `INGEST_PROGRESS_FILE` | unset | Optional trusted local atomic progress file; never enabled in HTTP sandbox |
 | `INGEST_STATE_DIR` | bundled project | Parent directory containing `inbox/` |
 | `INGEST_PROJECT_DIR` | bundled source | Supervisor's parser code location |
 | `INGEST_WATCH_POLL_SECONDS` | `5` | Supervisor scan interval |
@@ -93,6 +102,7 @@ Commands below assume the configured `INGEST_ENV_FILE` and Bifröst working dire
 
 ```bash
 uv run --frozen --project ingest ingest/ingest.py stats
+uv run --frozen --project ingest ingest/ingest.py doctor --json
 uv run --frozen --project ingest ingest/ingest.py list --limit 20
 uv run --frozen --project ingest ingest/ingest.py add ./notes/example.md
 uv run --frozen --project ingest ingest/ingest.py add 'https://example.com/'
@@ -105,7 +115,13 @@ the database; `search` also calls the embedding model. `add` parses, chunks,
 validates embeddings and commits document/chunks together. Parsing/embedding
 failure exits unsuccessfully without a half-inserted source document. Embeddings
 are computed before the insertion transaction to avoid holding DB locks throughout
-model work. Transient model HTTP failures have bounded retries.
+model work. Transient model HTTP failures have bounded retries. After repeated
+bad batch responses, the worker can split a batch into ordered halves, bounded by
+its request budget. Every input still needs a finite, nonzero vector of the correct
+dimension. Dimension mismatch stops before insertion. Temporary SQL failures replay
+prepared rows without re-embedding; a lost commit acknowledgement remains safe
+because the content hash is unique. A changing local file is deferred for a stable
+retry. API text bypasses document extraction to preserve Unicode and whitespace.
 
 The content hash covers extracted chunk text. An existing hash is a successful
 duplicate; it does not overwrite an existing title, source or provenance. Concurrent
@@ -124,8 +140,8 @@ command is part of these routine examples.
   PDF/office/image extraction can depend on external system tools and OCR resources;
   verify a representative file rather than assuming every format is available.
 - `.json` is preserved as formatted Unicode JSON text; it is not executed.
-- `.jsonl` is read as records and transformed to text. Blank/invalid JSON lines
-  are skipped, so validate important input first if every record must be retained.
+- `.jsonl` is read as records and transformed to text. Blank lines are skipped;
+  malformed JSON aborts the complete input with its line number, before insertion.
 - Web sources use bounded public fetch followed by trafilatura article extraction
   and Markdown parsing. Login-only/JavaScript-only pages may yield no useful text.
 - URL policy is shared with the secure API: only public HTTP(S) on ports 80/443,
@@ -173,9 +189,22 @@ The scan is not recursively watching arbitrary folders.
 On success, the original moves to `processed`. On failure, it moves/stays in `failed`
 and exponential retry state is persisted. Archive-name collisions get unique names,
 so earlier originals are preserved. A corrected file's size/mtime resets its retry
-record. Ordinary parser failures can retry indefinitely at the maximum delay;
-the watcher does not automatically fix a malformed source. Keep failed inputs
-until diagnosed, corrected or deliberately archived.
+record; file identity also detects replacement. Malformed input (exit 21) remains
+blocked until the original is corrected. Dependency failures (20), configuration
+failures (22), and deadlines (124) are retained with bounded exponential delay.
+Dependency/configuration outages cool down the whole inbox to avoid flooding the
+same unavailable service. Temporary failures can keep retrying at the maximum
+delay; no retry rewrites a malformed source. Keep originals until diagnosed,
+corrected or deliberately archived.
+
+The watcher owns an exclusive `.watcher.lock`. A second watcher refuses to run.
+State is written atomically, flushed to disk, and backed by `.watch-state.json.bak`.
+Damaged metadata is preserved as `.corrupt-*`; valid records or the last-good copy
+are recovered. Completed URLs are saved after each success, including before a
+shutdown. Child output uses a bounded 64 KiB tail. Timeouts/shutdown kill the
+child process group and leave its input recoverable. `.watch-health.json` records
+inbox health/cooldown; `.watch-job-progress.json` records the active trusted parser's
+stage. These hidden files are private state and belong in backups.
 
 ## 7. Service operation
 
@@ -231,3 +260,41 @@ uv run --frozen --project ingest python -m unittest discover -s ingest/tests -v
 Run from Bifröst root. This checks regression behavior without replacing live
 schema or source inputs. See [INTERFACE.md](INTERFACE.md), [README_AI.md](README_AI.md)
 and [security worker setup](../security/TECHNICAL_MANUAL.md#7-worker-isolation-and-database-permissions).
+
+## 10. Read-only diagnosis and recovery decisions
+
+`doctor --json` reports source counts, missing/zero embeddings, orphan chunks,
+documents without chunks, broken per-document chunk sequences and the declared
+vector dimension. It uses one read-only repeatable-read transaction and returns
+`repair_performed: false`. A failed invariant exits 21; unavailable/configured-wrong
+services use the classified exit codes below. It never reinitializes the schema,
+deletes knowledge or fabricates replacement vectors.
+
+| Exit | Meaning | Recovery |
+|---|---|---|
+| 0 | Complete or content-hash duplicate | Keep the existing result |
+| 20 | Temporary dependency/storage failure | Bounded retry/backoff |
+| 21 | Malformed, missing, empty or unsupported input | Correct the retained original |
+| 22 | Missing/wrong configuration, model dimension or SQL privileges/schema | Owner corrects configuration, then deliberately retries |
+| 124 | Supervisor deadline | Inspect size/service latency; retry after correction |
+| 1 | Unexpected failure | Inspect private logs before further work |
+
+Progress stages are `parsing`, `validating`, `embedding`, `persisting`, `done`,
+and `failed`. API job status reads sanitized markers from its bounded private log;
+the sandbox receives no writable host progress mount. The Security page's
+**Ingestion recovery** panel shows API jobs and local inbox health. Refresh while
+checking a long import. Owner retries reuse the original reservation, payload,
+principal and idempotency identity, and cannot bypass a revoked/expired client.
+
+For regression checks, run the viewer suite and the separate parser environment:
+
+```bash
+uv run --frozen pytest
+uv run --frozen --project ingest python -m unittest discover -s ingest/tests -v
+```
+
+The opt-in live checks in `tests/test_integration_ingest.py` require
+`BIFROST_TEST_INGEST_ENV` (private append-role dotenv) and `BIFROST_TEST_DB_URL`
+(owner DSN). Both must point to a separate database whose name starts with
+`bifrost_recovery_test_`; they append canaries there. Never point these tests at
+production. Default viewer tests skip these four checks.

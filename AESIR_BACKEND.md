@@ -8,12 +8,23 @@ Aesir native service. The original Ollama `nomic-embed-text` configuration still
 owns all corpus/query embeddings. Trusted ingestion, API ingestion, Skein and
 Skry do not switch embedding models when chat changes.
 
-On the exercised RTX 2060 Max-Q with the same Llama 3.2 3B GGUF, Aesir's optimized
-32-token passage took about 8.1 seconds versus 0.93 seconds for Ollama
-(1.53 seconds in a later repeat). **The live
-default remains Ollama for responsiveness.** Native Aesir is installed and can
-be selected explicitly. Its reliability integration does not establish a speed
-advantage. See [Aesir's measurement evidence](https://github.com/hrabanazviking/RuneForgeAI-Project-Aesir/blob/main/docs/evidence/second-brain-2026-10-01.md).
+On the exercised RTX 2060 Max-Q with the same Llama 3.2 3B GGUF, the latest
+native efficiency slice is another 1.60–1.66x faster than its previous release.
+Repeated 32-token passages now take about 0.838 seconds native versus 0.874
+seconds Ollama; repeated longer prompts take 0.876 versus 0.892 seconds in a
+small paired series. Observed first passage/longer requests still favor Ollama
+(1.306/5.820 seconds native versus 0.918/1.003 seconds Ollama). Templates and
+KV/prefix policies differ despite identical model bytes, so this is a narrow
+observation, not general provider superiority.
+
+**The live default remains Ollama for ordinary new prompts.** Native Aesir is
+installed, supervised and available as an explicit option. Its current kernels
+and exact-prefix reuse preserve sampled/greedy replay, deadline/reset recovery
+and the existing authentication/resource boundaries. Embeddings and corpus are
+unchanged. See [current measured evidence](https://github.com/hrabanazviking/RuneForgeAI-Project-Aesir/blob/main/docs/evidence/native-efficiency-2026-10-01.md)
+and [operation and benchmarking](https://github.com/hrabanazviking/RuneForgeAI-Project-Aesir/blob/main/docs/NATIVE_EFFICIENCY.md).
+Earlier 8.1-second native measurements describe the historical integration
+release and are superseded for this exercised model/device.
 
 ## Configuration
 
@@ -31,7 +42,7 @@ Use an absolute credential path and restart `bifrost.service` afterward.
 | `VIEWER_OLLAMA_URL` | Existing configuration | Embeddings and optional Ollama chat/fallback origin |
 | `VIEWER_EMBED_MODEL` | Existing configuration | Must retain the corpus embedding model identity |
 
-Default/fast engine example:
+Existing default policy example:
 
 ```dotenv
 VIEWER_CHAT_BACKEND=ollama

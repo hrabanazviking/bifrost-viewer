@@ -1,5 +1,8 @@
 # Bifröst security and portable access
 
+The [operator technical manual](TECHNICAL_MANUAL.md) explains owner recovery,
+mail setup/address changes, delegated-key lifecycle, copyable AI requests and limits.
+
 This domain owns credentials, recovery and admission. It never updates or deletes
 knowledge. Read [INTERFACE.md](INTERFACE.md) before changing the protocol.
 

@@ -1,5 +1,9 @@
 # Second-brain operations and recovery
 
+For detailed operator procedures, see the [whole-stack manual](../SECOND_BRAIN_MANUAL.md),
+[viewer manual](../TECHNICAL_MANUAL.md), [ingest manual](../ingest/TECHNICAL_MANUAL.md)
+and [security/AI manual](../security/TECHNICAL_MANUAL.md).
+
 ## Boundaries
 
 PostgreSQL owns documents and chunks. The bundled ingest/ CLI owns ingestion.
@@ -9,9 +13,12 @@ Skein writes only derived skein tables; Skry remains read-only.
 ## Access
 
 Use the Bifrost Second Brain desktop launcher, or visit http://127.0.0.1:8731 and
-enter the configured token. The launcher reads .env and never prints the secret.
-It uses a fragment URL to keep the token out of server access logs. Legacy query
-links are still accepted and moved to a fragment by the browser.
+enter a current scoped token. The launcher reads listener configuration from .env
+and the strong owner credential from private security state; it never prints it.
+The fragment is removed after page initialization. Legacy query links remain
+compatible, but new integrations should use bearer headers. The previous shared
+VIEWER_TOKEN is a read-only migration credential with a one-day expiry. Owner
+settings provide verified email recovery and named expiring AI keys.
 
 ## Recovery
 

@@ -1,5 +1,8 @@
 # Bifröst ingest component
 
+Read the [technical manual](TECHNICAL_MANUAL.md) for CLI commands, private settings,
+file/URL formats, inbox supervision, schema prerequisites and troubleshooting.
+
 The complete document/URL ingest pipeline now lives in the Bifröst repository.
 It uses an independent frozen Python environment so parser dependencies remain
 outside the viewer process. The original local inbox and credentials can stay

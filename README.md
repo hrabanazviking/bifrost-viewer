@@ -6,6 +6,17 @@
 
 # Bifröst
 
+## Detailed manuals
+
+- [Second-brain user and operations manual](SECOND_BRAIN_MANUAL.md) — all components,
+  daily use, GPU checks, services, backup/restore and moving machines.
+- [Bifröst technical manual](TECHNICAL_MANUAL.md) — installation, configuration,
+  browser controls, HTTP routes and build recovery.
+- [Security and outside-AI manual](security/TECHNICAL_MANUAL.md) — email recovery,
+  editable settings, scoped keys, safe submissions, quotas and transport.
+- [Document ingestion manual](ingest/TECHNICAL_MANUAL.md) — trusted CLI, inbox formats,
+  retained inputs, retry state and first-time schema setup.
+
 > *the shimmering bridge between the realm of raw knowledge and the realm of human sight*
 
 Bifröst is a self-hosted, browser-based **3D viewer for a local pgvector knowledge base**.
@@ -112,7 +123,8 @@ Bifröst is built under the **Mythic Engineering** convention. See:
 
 The short version of the laws:
 - The bridge shall **never** block in silence — every long operation reports live progress.
-- The bridge shall **never** mutate the source `documents` or `chunks` tables.
+- Display/search/layouts shall **never** update or delete source `documents` or
+  `chunks`; intentional additions belong to the separate ingest boundary.
 - All heavy work runs **out-of-process** so the FastAPI server stays responsive.
 - Every endpoint is wrapped in fault-tolerant `@safely(...)`.
 - All logging via the `logging` module — no bare `print()`.
@@ -138,7 +150,10 @@ GET  /api/ingest/jobs/{job_id}      job status
 GET  /api/gpu                       nvidia-smi snapshot
 ```
 
-All endpoints require a token via `?token=…` or `Authorization: Bearer …`.
+Data API routes require a scoped token; prefer `Authorization: Bearer …` over
+compatible query tokens. Static login/security pages and the bounded recovery
+routes are public. Administrative builds/settings require owner access. See the
+[complete security contract](security/INTERFACE.md).
 
 ---
 

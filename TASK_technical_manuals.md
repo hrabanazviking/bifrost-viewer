@@ -49,3 +49,14 @@ interface documents describe contracts, but lack a connected operator manual.
 - New-install, recovery and destructive maintenance prerequisites are explicit.
 - No generic driver-install command is represented as portable across distributions.
 - Documentation states what is implemented; it makes no guarantee of bug freedom.
+
+## Documentation verification — 2026-10-01
+
+Eight complete manuals were prepared in their owning component folders, including
+the private inbox's local-only guide. Checked 89 local links/anchors, Bash syntax
+for 41 command blocks and Python syntax for both API examples without errors.
+Read-only CLI help verified ingest, Skry and Skein option names; installed eww
+help and current service/NVIDIA state were inspected. Git diffs contain only
+Markdown documentation; no runtime/data/configuration or service changes are
+part of this task. The manuals explicitly cover capacity limits and isolation
+boundaries without claiming unlimited automatic repair or successful SMTP setup.

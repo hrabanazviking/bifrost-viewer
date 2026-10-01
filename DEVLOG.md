@@ -221,3 +221,16 @@ Two small maintenance canaries were added; original source rows were preserved.
 The current document graph rebuilt successfully after those additions. Gmail TLS
 negotiation works, but delivery/recipient verification still requires a user-entered
 SMTP app password. No successful email delivery is claimed before that setup.
+
+## Technical manuals — 2026-10-01
+
+Added SECOND_BRAIN_MANUAL.md and component technical manuals for the viewer,
+security/recovery and trusted ingest pipeline. The stack guide connects sibling
+Skry/Skein and desktop gauges, private inbox state, service operations, NVIDIA/
+Ollama checks, coordinated backups, scratch restore verification and migration.
+Security instructions cover verified mail/address changes, owner recovery,
+expiring scoped AI keys, idempotent submissions, bounded queues and transport/
+sandbox limitations. Added README navigation and corrected stale launcher-access
+notes. Source/CLI contracts and local service/GPU state were inspected; documentation
+links, examples and diffs were checked. No runtime code, source rows, configuration,
+credentials or services were changed by this documentation task.

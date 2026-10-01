@@ -240,3 +240,11 @@ report progress. Database outages and corrupt caches recover through periodic
 maintenance. Graph neighbor calculations use row blocks and document edges are
 sparse, reducing memory and browser load. Semantic-search outages fall back to
 clearly identified keyword matches. See [operations](docs/operations.md).
+
+## Aesir native chat connection
+
+Chat generation can now be selected independently of the original corpus
+embeddings. [AESIR_BACKEND.md](AESIR_BACKEND.md) covers the authenticated local
+Aesir service, bounded admission, explicit fallback and circuit recovery. The
+measured faster default remains Ollama; the native engine is available for
+explicitly selected work. See [Aesir's setup and evidence](https://github.com/hrabanazviking/RuneForgeAI-Project-Aesir/blob/main/docs/SECOND_BRAIN.md).

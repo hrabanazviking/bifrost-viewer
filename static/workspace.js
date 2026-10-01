@@ -28,6 +28,8 @@
     } else { el("document-count").textContent = "Unavailable"; el("chunk-count").textContent = "Unavailable"; }
     const h = outcomes[1];
     el("health-state").textContent = h.status === "rejected" ? "Unavailable" : h.value.db && h.value.ollama ? "Ready" : h.value.db ? "Keyword mode" : "Needs attention";
+    const chat = h.status === "fulfilled" ? h.value.inference : null;
+    el("inference-state").textContent = chat ? "Chat: " + (chat.configured_provider || "configuration") + (chat.ready ? " · ready" : " · unavailable") + (chat.circuit === "open" ? " · recovery scheduled" : "") : "Chat status unavailable";
   }
   async function loadJobs() {
     if (refreshing || !B.hasToken() || Date.now() < nextPollAt) return;

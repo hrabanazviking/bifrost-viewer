@@ -1,0 +1,12 @@
+{
+  "request_timeout_seconds": 45,
+  "connect_timeout_seconds": 3,
+  "queue_timeout_seconds": 0.2,
+  "concurrency": 1,
+  "failure_threshold": 2,
+  "cooldown_seconds": 30,
+  "max_response_bytes": 1048576,
+  "health_cache_seconds": 10,
+  "ollama_context": 4096,
+  "temperature": 0.0
+}

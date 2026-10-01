@@ -265,3 +265,22 @@ stdio adapter provides read tools by default and explicitly enabled append tools
 Detailed AI_CONNECT.md and component guides explain real network and cloud-host
 requirements. Boundary tests and a real SDK stdio handshake validate the contract;
 synthetic browser fixtures keep visual/form testing out of production knowledge.
+
+## 2026-10-01 — Independent Aesir chat with bounded recovery
+
+The Architect/Forge/Auditor/Scribe roles ran sequentially under the prepublished
+TASK_aesir_backend contract. inference.py separates chat from corpus embeddings,
+loads the private native credential safely, rejects redirects/environment proxies,
+limits concurrency and response size, validates model/completion and records an
+explicit primary circuit/fallback. Human health shows selected chat status; AI
+instructions describe optional HyDE and independent embedding health.
+
+The isolated full suite passes 127 tests, including 22 provider contract cases
+and four existing DB/worker integrations. Separate actual socket proof exercises
+native HyDE, healthy original embeddings/search, three outage fallback requests,
+30-second cooldown recovery and an upstream native SIGKILL restart. Source counts
+and fingerprint are unchanged: 1237 documents, 49006 chunks, v3_49006_49006.
+Aesir is available under a private build-checked supervisor; the measured faster
+live chat default remains Ollama. No append scope, DB role, corpus embedding,
+source record or outside-AI authentication changes. See AESIR_BACKEND.md and the
+upstream measured performance record; native speed superiority remains unproved.

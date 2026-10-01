@@ -11,6 +11,8 @@
 ```
 ~/ai/ingest-viewer/
 ├── viewer.py           ← The Mind: FastAPI app, all endpoints, async build orchestrator
+├── inference.py        ← Separate chat contracts, private key, bounded admission/circuit
+├── inference.json      ← Chat routing policy
 ├── pyproject.toml      ← Dep manifest (uv-managed)
 ├── .env                ← Local config (NEVER committed)
 ├── .env.example        ← Template for new installs
@@ -75,7 +77,7 @@ browser renders → interactive
 
 ```
 browser → /api/search?q=…&hyde=0
-    if hyde: ollama_chat(question→hypothetical answer)
+    if hyde: selected chat router(question→hypothetical answer)
     embedding ← ollama_embed(query_text)
     Postgres hybrid query (semantic + keyword RRF)
     return top-K chunk IDs
@@ -119,7 +121,8 @@ browser shows side panel
 |------|----|----------|-------|
 | Face → Mind | HTTP/JSON | Token in URL (`?token=…`) or `Authorization: Bearer …` | All API calls go through `safely(...)` |
 | Mind → Deep Memory | psycopg + `psycopg_pool` | Single shared pool, min_size=1, max_size=8 | Opened lazily at first request |
-| Mind → Ollama | httpx | Timeout: 120-300 s | Failures degrade gracefully (HyDE falls back to raw query, cluster names fall back to "Cluster N") |
+| Mind → chat router | bounded httpx, policy JSON | 45 s per-operation HTTP timeout, 0.2 s admission wait, one call | Explicit primary circuit/fallback; HyDE raw-query and cluster-label degradation |
+| Mind → Ollama embeddings | httpx | 300 s | Original embedding identity; keyword fallback on query-embedding failure |
 | Mind → Skein | Python import | `skein.build_skein`, `skein.neighbors_of` | The Skein build itself is run as a *subprocess* to keep the FastAPI process responsive |
 | Mind → Skry | Python import | `skry.skry(...)` | In-process call, ~100 ms typical |
 
@@ -245,3 +248,17 @@ TLS, refuses redirects and requires stable append IDs. Its optional SDK 2 MCP st
 adapter exposes only scoped knowledge operations, with append tools disabled until
 explicitly enabled. It uses the same REST API, never PostgreSQL or an alternate
 write endpoint. The viewer's dependency environment remains independent.
+
+## Independent native chat ownership — 2026-10-01
+
+The same-host Aesir service owns native CUDA generation and local authentication;
+its user unit owns supervised process restart. Bifröst inference.py independently
+owns provider admission, private regular-file credential loading, HTTP budgets,
+one finite semaphore wait, completion/model validation and an explicit primary
+circuit/fallback. Native health identifies the loaded model and absent embedding
+capability. The existing Ollama embedding URL and model remain the corpus space.
+The viewer delegates its legacy ollama_chat helper to the lazy router, closes it
+on shutdown, and exposes safe inference state in existing authenticated health.
+No source DB, append role, externally reachable route or scoped-key policy changes.
+Measured native latency is still higher; the default remains Ollama.
+See AESIR_BACKEND.md for configuration, time-budget boundaries and recovery.

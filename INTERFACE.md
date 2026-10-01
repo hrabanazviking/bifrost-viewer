@@ -52,3 +52,16 @@ administration. Owner-only GET/POST `/api/admin/connection` controls name/base_u
 URLs are validated origins, never fetched or used to change listener security.
 Allowed cross-origin callers can read Retry-After on errors as well as successes.
 See AI_CONNECT.md and clients/README_AI.md for operational contracts.
+
+## Additive chat health contract — 2026-10-01
+
+GET /api/health adds inference with configured_provider, fallback_provider,
+last_provider, last_error, circuit, retry_after_seconds, ready and
+embeddings_provider. Existing DB/Ollama/cache/build fields remain. Configuration
+errors report safe ready=false/last_error=configuration without private paths.
+Readiness is cached ten seconds. Native success requires the configured model,
+CUDA backend and EOS/length completion; Ollama requires the configured model,
+done=true and stop/length. Partial text is discarded. HyDE/raw-query and keyword
+fallback response fields retain their existing meanings. Provider selection is
+private operator configuration, not a new external model or admin API.
+See AESIR_BACKEND.md and inference.json for explicit circuit/response limits.

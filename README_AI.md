@@ -14,3 +14,11 @@ viewer. security/connections.py owns discovery, advertised profile and curated
 agent schema. clients/ owns a separate locked optional MCP runtime; do not add
 SDK dependencies to the viewer or bypass the REST gateway. Read AI_CONNECT.md,
 TASK_friendly_connections.md and clients/README_AI.md before changing agent flows.
+
+inference.py owns independent stateless chat routing, private native credential
+admission, bounded HTTP responses/concurrency and circuit recovery. inference.json
+owns policy. viewer.ollama_chat retains its public name but delegates to this
+router; viewer.ollama_embed and downstream ingestion/Skry/Skein embedding identity
+stay separate. Read TASK_aesir_backend.md and AESIR_BACKEND.md before changing it.
+Provider/model/policy changes require restart; lazy configuration failure must not
+stop viewer boot. External AIs continue using the scoped Bifröst gateway.

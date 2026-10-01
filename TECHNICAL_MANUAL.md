@@ -12,6 +12,7 @@ insertion and [security](security/TECHNICAL_MANUAL.md) owns credentials/admissio
 | `viewer.py` | FastAPI routes, DB pool, search, maintenance and build supervision |
 | `local_server.py` | Listener sockets, optional native TLS and Uvicorn configuration |
 | `graph_builder.py` | Separate-process chunk/document layout and clustering |
+| `inference.py`, `inference.json` | Independent bounded chat routing and policy |
 | `runtime_support.py` | Validated/atomic runtime helpers |
 | `kg_extract.py` | Legacy/experimental extraction support; not needed for ordinary Skein use |
 | `static/` | Viewer and owner security browser interface |
@@ -112,6 +113,11 @@ path setting expands `~`. Restart the relevant service after settings changes.
 | `VIEWER_OLLAMA_URL` | `http://localhost:11434` | Model service; current installation uses Gungnir |
 | `VIEWER_EMBED_MODEL` | `nomic-embed-text` | Must match the corpus embedding space |
 | `VIEWER_CHAT_MODEL` | `llama3.2:3b` | HyDE and cluster names |
+| `VIEWER_CHAT_BACKEND` | `ollama` | Select Ollama or authenticated local Aesir chat |
+| `VIEWER_CHAT_URL` | Backend-dependent origin | Chat only; does not change embedding origin |
+| `VIEWER_CHAT_API_KEY_FILE` | Required for Aesir | Private current-owner regular key file |
+| `VIEWER_CHAT_FALLBACK` | `none` | Explicit Ollama fallback for an Aesir primary |
+| `VIEWER_INFERENCE_POLICY` | root `inference.json` | Bounded admission, HTTP and circuit policy |
 | `VIEWER_TOKEN` | blank on new install | Optional one-day read-only migration credential |
 | `VIEWER_BIND_HOST` | `127.0.0.1` | Main bind; explicitly configured Tailscale address for private remote use |
 | `VIEWER_LOOPBACK_HOST` | `127.0.0.1` | Local listener/launcher fallback |
@@ -259,3 +265,14 @@ or database access is introduced. Browser activity polling pauses when hidden an
 honors server retry delays. Lost submissions keep their original operation ID
 while the page stays open; check activity before reloading. Secrets and drafts
 are never persisted in browser storage.
+
+## 10. Independent Aesir/Ollama chat routing
+
+[AESIR_BACKEND.md](AESIR_BACKEND.md) is the complete operator/maintainer guide.
+The human Knowledge services card and authenticated health expose selected chat,
+readiness and circuit status separately from the original embedding service.
+The current default remains measured faster Ollama. Native Aesir is supervised
+and explicitly selectable for same-host work; its private service key is separate
+from owner and external-AI credentials. Scoped read/append clients continue using
+Bifröst and do not receive or need the native service key. No source re-embedding
+or database migration accompanies chat selection.

@@ -56,8 +56,14 @@ curl --fail-with-body --connect-timeout 5 --max-time 30 \
 
 `auth/me` returns the key identity, scopes and individual quotas. `capabilities`
 returns server limits, weighted request costs, retry rules and terminal job states.
-`health` reports `db` and `ollama` separately. If embeddings are unavailable, normal
-search can fall back to keyword matches and identifies the degraded mode.
+`health` reports `db` and `ollama` separately and adds `inference` for selected
+chat, last provider, readiness, circuit and retry delay. Embeddings retain their
+original model identity even if native Aesir supplies chat. `hyde=0` is the normal
+fast read path; opt-in `hyde=1` can take longer and can use configured fallback.
+If embeddings are unavailable, normal search can fall back to keyword matches
+and identifies the degraded mode. A chat outage does not authorize bypassing the
+gateway or submitting replacement/duplicate source material. See
+[AESIR_BACKEND.md](AESIR_BACKEND.md) for operator configuration and exact bounds.
 
 The authenticated `GET /api/ai/openapi.json` provides the curated OpenAPI contract
 for agent routes. Its bearer security scheme and append operation-ID header are

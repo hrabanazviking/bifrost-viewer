@@ -81,6 +81,7 @@ from security.queue import IngestQueue
 from security.routes import router as security_router
 from security.connections import router as connection_router
 from runtime_support import atomic_json, valid_graph
+from inference import from_environment
 
 
 # ─── request models ─────────────────────────────────────────────────────────
@@ -107,6 +108,23 @@ SECURITY_DIR = Path(os.getenv("VIEWER_SECURITY_DIR", str(Path(os.getenv("XDG_STA
 _security_store = None
 _ingest_queue = None
 _security_lock = threading.RLock()
+_chat_router = None
+
+
+def get_chat_router():
+    global _chat_router
+    with _security_lock:
+        if _chat_router is None:
+            _chat_router = from_environment(OLLAMA_URL, CHAT_MODEL)
+        return _chat_router
+
+
+def chat_health():
+    try:
+        return get_chat_router().health()
+    except (OSError, ValueError, KeyError):
+        log.warning("Chat configuration unavailable; check private backend settings")
+        return {"ready": False, "last_error": "configuration", "embeddings_provider": "ollama"}
 
 
 def get_security():
@@ -240,6 +258,10 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             log.warning("error closing pool: %s", e)
     log.info("Bifröst shutting down")
+    global _chat_router
+    if _chat_router is not None:
+        _chat_router.close()
+        _chat_router = None
 
 
 app = FastAPI(title="Bifröst", docs_url=None, redoc_url=None, lifespan=lifespan)
@@ -778,16 +800,8 @@ def ollama_embed(texts: list[str]) -> list[list[float]]:
 
 
 def ollama_chat(prompt: str, *, system: str | None = None, max_tokens: int = 256) -> str:
-    msgs = []
-    if system:
-        msgs.append({"role": "system", "content": system})
-    msgs.append({"role": "user", "content": prompt})
-    r = httpx.post(f"{OLLAMA_URL}/api/chat", json={
-        "model": CHAT_MODEL, "messages": msgs, "stream": False,
-        "options": {"num_predict": max_tokens, "temperature": 0.2},
-    }, timeout=120)
-    r.raise_for_status()
-    return r.json()["message"]["content"].strip()
+    """Legacy public name; selected chat provider is independent of embeddings."""
+    return get_chat_router().chat(prompt, system=system, max_tokens=max_tokens)
 
 
 def ollama_alive() -> bool:
@@ -824,6 +838,7 @@ def health(_=Depends(require_token)):
     return orj({
         "ok": db_ok,
         "db": db_ok, "ollama": ollama_ok,
+        "inference": chat_health(),
         "chunk_graph_cached": cache_exists,
         "fingerprint": fp,
         "build_state": build_st,

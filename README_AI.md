@@ -8,3 +8,9 @@ local_server.py binds the configured listener and loopback without opening a new
 The static frontend starts in document overview and preserves the existing detailed chunk view.
 ingest/ owns the published CLI, schema and separate frozen parser environment.
 The viewer delegates to it; ingestion source and private runtime data are separate.
+
+The default human workspace is static/workspace.html; `/explore` retains the 3D
+viewer. security/connections.py owns discovery, advertised profile and curated
+agent schema. clients/ owns a separate locked optional MCP runtime; do not add
+SDK dependencies to the viewer or bypass the REST gateway. Read AI_CONNECT.md,
+TASK_friendly_connections.md and clients/README_AI.md before changing agent flows.

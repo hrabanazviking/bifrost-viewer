@@ -1,15 +1,21 @@
 "use strict";
+let profileLoaded = false, sessionVersion = 0;
 let token = new URLSearchParams(location.hash.slice(1)).get("token") || "";
 history.replaceState(null, "", location.pathname);
 const el = id => document.getElementById(id);
 function status(message, error = false) { el("status").textContent = message; el("status").classList.toggle("error", error); }
 async function api(path, body, authenticated = true) {
+  const version = sessionVersion;
   const headers = {"Content-Type": "application/json"};
   if (authenticated) headers.Authorization = "Bearer " + token;
   const result = await fetch(path, {method: body === undefined ? "GET" : "POST", headers,
     body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(20000)});
   const data = await result.json();
-  if (!result.ok) throw new Error(data.error || data.detail || "Request failed");
+  if (version !== sessionVersion) throw new Error("Session changed. Open the local launcher or unlock again.");
+  if (!result.ok) {
+    const retry = result.headers.get("Retry-After");
+    throw new Error((data.error || (typeof data.detail === "string" ? data.detail : "Check the form fields") || "Request failed") + (retry ? ` Wait ${retry} seconds before trying again.` : ""));
+  }
   return data;
 }
 function bind(id, fn) {
@@ -20,7 +26,7 @@ function bind(id, fn) {
     finally { button.disabled = false; }
   });
 }
-function issue(value) { el("issued").value = value; el("issued-label").hidden = false; }
+function issue(value) { el("issued").value = value; el("issued-label").hidden = false; el("copy-issued").hidden = false; }
 async function loadKeys() {
   const keys = await api("/api/admin/keys"); el("keys").replaceChildren();
   for (const key of keys) {
@@ -51,7 +57,14 @@ async function loadOwner() {
   el("mail-mode").value = mail.mode || "starttls"; el("mail-user").value = mail.username || data.email;
   el("mail-sender").value = mail.sender || data.email;
   el("mail-state").textContent = data.mail_configured ? "An SMTP password is saved. Send an email verification code to test delivery." : "No SMTP password is saved; automatic mail delivery needs setup.";
-  await loadKeys(); await loadJobs(); status("Owner settings unlocked.");
+  el("setup-summary").textContent = data.mail_configured && data.verified ? "Recovery is ready. Create an individual AI key below, then give the assistant the connection guide." : "Finish your recovery setup: configure mail delivery, send a verification code, and confirm the code here. Existing access stays valid while you set this up.";
+  el("mail-details").open = !data.mail_configured;
+  if (!profileLoaded) {
+    const profile = await api("/api/admin/connection");
+    el("connection-name").value = profile.name; el("connection-url").value = profile.base_url; profileLoaded = true;
+  }
+  const outcomes = await Promise.allSettled([loadKeys(), loadJobs()]);
+  status(outcomes.some(x => x.status === "rejected") ? "Owner settings unlocked; some activity could not be loaded. Refresh when the service is ready." : "Owner settings unlocked.");
 }
 
 async function loadJobs() {
@@ -62,7 +75,7 @@ async function loadJobs() {
   for (const job of jobs) {
     const row = document.createElement("div"); row.className = "key";
     const label = document.createElement("span");
-    label.textContent = `${job.job_id} · ${job.status} · ${job.stage} ${Math.round(job.progress * 100)}% · attempts ${job.attempts}${job.error_category ? " · " + job.error_category : ""}`;
+    label.textContent = `${job.title || job.url || job.job_id} · ${job.status} · ${job.stage} ${Math.round(job.progress * 100)}% · attempts ${job.attempts}${job.error_category ? " · " + job.error_category : ""}`;
     row.append(label);
     if (job.status === "failed") {
       const button = document.createElement("button"); button.textContent = "Retry original job";
@@ -76,8 +89,17 @@ async function loadJobs() {
     el("ingest-jobs").append(row);
   }
 }
+bind("connection-profile", async () => {
+  const data = await api("/api/admin/connection", {name: el("connection-name").value.trim(), base_url: el("connection-url").value.trim()});
+  status(data.message);
+});
+el("copy-issued").onclick = async () => {
+  try { await navigator.clipboard.writeText(el("issued").value); status("Key copied. Store it in secret settings and share the guide separately."); }
+  catch { el("issued").focus(); el("issued").select(); status("Select and copy the key manually; clipboard access is unavailable here."); }
+};
+el("connections-link").onclick = event => { event.preventDefault(); location.assign("/connect" + (token ? "#token=" + encodeURIComponent(token) : "")); };
 el("refresh-jobs").onclick = () => loadJobs().catch(error => status(error.message, true));
-bind("unlock", async () => { token = el("owner-token").value.trim(); await loadOwner(); });
+bind("unlock", async () => { sessionVersion++; token = el("owner-token").value.trim(); await loadOwner(); });
 bind("mail", async () => {
   await api("/api/admin/mail", {host: el("mail-host").value.trim(), port: Number(el("mail-port").value), mode: el("mail-mode").value, username: el("mail-user").value.trim(), sender: el("mail-sender").value.trim(), password: el("mail-password").value});
   el("mail-password").value = ""; await loadOwner(); status("Mail settings saved. Send an email verification code to check delivery.");
@@ -95,15 +117,16 @@ bind("recover-confirm", async () => {
 });
 el("back").onclick = event => { if (token) { event.preventDefault(); location.assign("/#token=" + encodeURIComponent(token)); } };
 el("lock").onclick = () => {
-  token = ""; el("owner").hidden = true; el("unlock-section").hidden = false;
+  sessionVersion++; token = ""; profileLoaded = false; el("copy-issued").hidden = true; el("owner").hidden = true; el("unlock-section").hidden = false;
   el("lock").hidden = true; el("issued").value = ""; el("issued-label").hidden = true;
+  el("keys").replaceChildren(); el("ingest-jobs").replaceChildren();
   for (const id of ["owner-token", "mail-password", "email-code", "recovery-code"]) el(id).value = "";
   status("Settings locked. Reopen with the local launcher or enter the owner token.");
 };
 window.addEventListener("hashchange", () => {
   const incoming = new URLSearchParams(location.hash.slice(1)).get("token");
   if (incoming) {
-    token = incoming; history.replaceState(null, "", location.pathname);
+    sessionVersion++; token = incoming; profileLoaded = false; history.replaceState(null, "", location.pathname);
     loadOwner().catch(error => status(error.message, true));
   }
 });

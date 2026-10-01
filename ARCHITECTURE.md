@@ -47,7 +47,7 @@ External system dependencies (assumed present, NOT managed by Bifröst):
 ### River of First Sight (cold page load)
 
 ```
-browser GET /                       → static/index.html
+browser GET /explore                → static/index.html
 browser GET /api/skein/status       → Skein widget initializes
 browser GET /api/graph?level=chunk  → cache miss → 202 Accepted + build kicked off
 browser polls /api/graph/build-status (every 1.5s) → shows progress in loader
@@ -226,3 +226,22 @@ Skein 0.1.1 holds a cooperative database advisory lock and gates publication on
 discovery coverage. Entity layouts use actual build-generation keys and one
 repeatable-read snapshot. Source counts/IDs remain the underlying corpus fingerprint;
 in-place source changes still require deliberate refresh.
+
+## Human workspace and agent connections
+
+`GET /` serves `static/workspace.html`: identity, read-only counts, health, search,
+passage reading and append forms. It never loads the full graph just for counters.
+`/explore` preserves the graph. `/security` uses the shared responsive theme, and
+`/connect` provides server metadata, placeholder-only setup examples and MD downloads.
+
+`security/connections.py` owns public discovery, owner-controlled advertised origin,
+principal-specific capabilities and a curated authenticated agent OpenAPI schema.
+Discovery has a separate public quota and contains no corpus or credentials. The
+profile is metadata, not a proxy or network configurator. Origin/TLS/Host admission
+and the private SecurityStore remain authoritative.
+
+`clients/` runs on an AI machine. A bounded standard-library REST client verifies
+TLS, refuses redirects and requires stable append IDs. Its optional SDK 2 MCP stdio
+adapter exposes only scoped knowledge operations, with append tools disabled until
+explicitly enabled. It uses the same REST API, never PostgreSQL or an alternate
+write endpoint. The viewer's dependency environment remains independent.

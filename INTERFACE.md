@@ -36,3 +36,19 @@ and security/INTERFACE.md. Owner diagnostics/retry routes are scoped admin-only.
 Entity layouts use v2_build<build-id>_<source-fingerprint> keys. Each entity/edge
 read uses one repeatable-read snapshot and rejects a changed generation. Starting
 a Skein rebuild retains the previous cached layouts until successful replacement.
+
+## Friendly workspace and connection contract
+
+`GET /` is the human workspace; `GET /explore` is the original graph; `GET /connect`
+is the AI setup page. `GET /AI_CONNECT.md` downloads credential-free instructions.
+`GET /api/overview` requires read scope and returns documents/chunks counts from
+the shared pool without loading a graph. Job records add optional `title` for
+human activity labels; existing job fields and ownership remain compatible.
+
+`GET /.well-known/bifrost.json` is bounded public metadata. `GET /api/capabilities`
+and `/api/auth/me` retain previous fields and add principal-specific quotas and
+protocol/retry descriptors. `GET /api/ai/openapi.json` requires read and excludes
+administration. Owner-only GET/POST `/api/admin/connection` controls name/base_url;
+URLs are validated origins, never fetched or used to change listener security.
+Allowed cross-origin callers can read Retry-After on errors as well as successes.
+See AI_CONNECT.md and clients/README_AI.md for operational contracts.

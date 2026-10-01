@@ -146,3 +146,11 @@ secrets, not encrypted against an attacker who already controls your Unix accoun
 The design follows [OWASP REST security](https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html),
 [recovery guidance](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html)
 and [SSRF guidance](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html).
+
+connections.py owns portable metadata and curated agent schemas. Public discovery
+has its own quota. Owner profile updates never change the listener or fetch an
+external destination. Keep old capability fields compatible and expose Retry-After
+for valid browser Origins on rejected requests. See ../AI_CONNECT.md.
+
+[agent_schemas.json](agent_schemas.json) declares the curated OpenAPI response shapes.
+Keep fields compatible with real route responses and worker status contracts.

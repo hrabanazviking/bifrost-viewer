@@ -253,3 +253,15 @@ source row/payload and revoked-key boundary.
 
 Generated-layout cleanup follows successful atomic publication, preserving old
 layouts on a failed replacement. Two regressions verify that boundary.
+
+## 2026-10-01 — Human workspace and authorized AI connection interfaces
+
+Added a responsive workspace, preserved graph navigation, a connection center,
+clearer owner recovery/key controls and editable advertised origin. Public discovery
+contains metadata only; authenticated capabilities report per-key quotas and the
+curated OpenAPI contract excludes administration. Agent REST retries retain append
+IDs, refuse redirects and honor server backoff. An independent locked MCP SDK 2
+stdio adapter provides read tools by default and explicitly enabled append tools.
+Detailed AI_CONNECT.md and component guides explain real network and cloud-host
+requirements. Boundary tests and a real SDK stdio handshake validate the contract;
+synthetic browser fixtures keep visual/form testing out of production knowledge.

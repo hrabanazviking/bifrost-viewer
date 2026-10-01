@@ -76,14 +76,21 @@ class SecurityGateway:
         await send({"type": "http.response.start", "status": status, "headers": headers})
         await send({"type": "http.response.body", "body": json.dumps({"error": message}).encode()})
 
-    async def _preflight(self, send, origin):
+    async def _preflight(self, send):
         await send({"type": "http.response.start", "status": 204, "headers": [
-            (b"access-control-allow-origin", origin.encode()), (b"vary", b"Origin"),
             (b"access-control-allow-methods", b"GET, POST, OPTIONS"),
             (b"access-control-allow-headers", b"Authorization, Content-Type, Idempotency-Key")]})
         await send({"type": "http.response.body", "body": b""})
 
     def _admit(self, store, scope):
+        if scope["path"] == "/.well-known/bifrost.json":
+            if scope["method"] != "GET":
+                raise AccessError("Discovery supports GET only", 405)
+            window = str(int(time.time() // 3600))
+            self._global_budget(store, window)
+            peer = scope.get("client", ("", 0))[0]
+            store.spend("discovery:" + digest(peer), window + ":discovery", store.limits["discovery_requests_per_hour"])
+            return False
         if not scope["path"].startswith("/api/"):
             return False
         peer, window = scope.get("client", ("", 0))[0], str(int(time.time() // 3600))
@@ -147,7 +154,7 @@ class SecurityGateway:
                 policy = "default-src 'self'; script-src 'self' https://unpkg.com 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
                 extra.append((b"content-security-policy", policy.encode()))
                 if origin:
-                    extra.extend([(b"access-control-allow-origin", origin.encode()), (b"vary", b"Origin")])
+                    extra.extend([(b"access-control-allow-origin", origin.encode()), (b"vary", b"Origin"), (b"access-control-expose-headers", b"Retry-After")])
                 message["headers"] = message.get("headers", []) + extra
             await send(message)
         return secure_send
@@ -157,13 +164,15 @@ class SecurityGateway:
             return await self.app(scope, receive, send)
         store, acquired = self.get_store(), False
         cfg = store.limits
+        response_send = self._sender("", scope, send)
         try:
             if sum(len(k) + len(v) for k, v in scope["headers"]) > cfg["header_bytes"]:
                 raise AccessError("Request headers too large", 431)
             headers = {k.lower(): v for k, v in scope["headers"]}
             origin = self._boundary(scope, headers)
+            response_send = self._sender(origin, scope, send)
             if scope["method"] == "OPTIONS" and origin:
-                return await self._preflight(send, origin)
+                return await self._preflight(response_send)
             expensive = self._admit(store, scope)
             if int(headers.get(b"content-length", b"0")) > cfg["body_bytes"]:
                 raise AccessError("Request body too large", 413)
@@ -174,11 +183,11 @@ class SecurityGateway:
             if body is not None:
                 await self.app(scope, self._receive(body, receive), self._sender(origin, scope, send))
         except AccessError as exc:
-            await self._reply(send, exc.status, str(exc), exc.retry)
+            await self._reply(response_send, exc.status, str(exc), exc.retry)
         except (ValueError, UnicodeError):
-            await self._reply(send, 400, "Malformed request")
+            await self._reply(response_send, 400, "Malformed request")
         except TimeoutError:
-            await self._reply(send, 408, "Request body timeout")
+            await self._reply(response_send, 408, "Request body timeout")
         finally:
             if acquired:
                 self.expensive = max(0, self.expensive - 1)

@@ -33,3 +33,22 @@ push implementation to the owning GitHub project. Package updated public manuals
 Volmarr requested implementation, network agent access, human usability and MD
 instructions, with prior explicit authorization to push improvements to GitHub.
 Routine implementation, verification and deployment continue within that scope.
+
+## Completion evidence
+
+Implemented the human workspace, preserved graph, connection center, clearer owner
+controls, validated portable address, bounded public discovery and authenticated
+agent OpenAPI with response schemas. Added a separate dependency-free REST client
+and locked optional MCP SDK 2 stdio adapter, with seven read tools and two opt-in
+append tools. Server authorization and append-only source ownership remain intact.
+
+Verification: 105 viewer tests including four real isolated ingestion checks,
+26 portable-client/MCP tests, desktop and 390px mobile browser checks, live REST
+and MCP read checks over the configured tailnet listener, scope/revocation checks,
+and live schema validation. Documents/passages stayed at 1237/49006. Services run
+without restarts after deployment; NVIDIA and Ollama remain available. MD validation
+covers ten manuals, 107 local links, 47 Bash blocks and two Python examples.
+
+Remote reachability must be tested from the agent machine. The stdio adapter needs
+a compatible local AI host; cloud-only hosts need an authorized REST integration.
+The advertised address is metadata and does not configure public TLS or networking.

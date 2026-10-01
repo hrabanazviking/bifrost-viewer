@@ -1,0 +1,304 @@
+{
+  "AgentIdentity": {
+    "type": "object",
+    "required": [
+      "id",
+      "scopes",
+      "quotas"
+    ],
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "scopes": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "read",
+            "ingest",
+            "admin"
+          ]
+        }
+      },
+      "quotas": {
+        "type": "object",
+        "required": [
+          "request_units_per_minute",
+          "submissions_per_minute",
+          "documents_per_utc_day",
+          "bytes_per_utc_day"
+        ],
+        "properties": {
+          "request_units_per_minute": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "submissions_per_minute": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "documents_per_utc_day": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "bytes_per_utc_day": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    }
+  },
+  "AgentCapabilities": {
+    "type": "object",
+    "required": [
+      "authentication",
+      "limits",
+      "principal",
+      "idempotency"
+    ],
+    "properties": {
+      "authentication": {
+        "const": "Bearer"
+      },
+      "principal": {
+        "$ref": "#/components/schemas/AgentIdentity"
+      },
+      "limits": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "idempotency": {
+        "const": "Idempotency-Key"
+      },
+      "destructive_operations": {
+        "const": false
+      }
+    }
+  },
+  "AgentHealth": {
+    "type": "object",
+    "required": [
+      "ok",
+      "db",
+      "ollama"
+    ],
+    "properties": {
+      "ok": {
+        "type": "boolean"
+      },
+      "db": {
+        "type": "boolean"
+      },
+      "ollama": {
+        "type": "boolean"
+      },
+      "fingerprint": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "build_state": {
+        "type": "object"
+      }
+    }
+  },
+  "Passage": {
+    "type": "object",
+    "required": [
+      "id",
+      "text",
+      "doc_id"
+    ],
+    "properties": {
+      "id": {
+        "type": "integer"
+      },
+      "doc_id": {
+        "type": "integer"
+      },
+      "chunk_index": {
+        "type": "integer"
+      },
+      "text": {
+        "type": "string"
+      },
+      "doc_title": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "source": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "content_type": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    }
+  },
+  "SearchResults": {
+    "type": "object",
+    "required": [
+      "query",
+      "hits",
+      "search_mode",
+      "degraded"
+    ],
+    "properties": {
+      "query": {
+        "type": "string"
+      },
+      "search_mode": {
+        "enum": [
+          "hybrid",
+          "keyword"
+        ]
+      },
+      "degraded": {
+        "type": "boolean"
+      },
+      "hyde_used": {
+        "type": "boolean"
+      },
+      "hyde_doc": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "hits": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "id",
+            "doc_id"
+          ],
+          "properties": {
+            "id": {
+              "type": "integer"
+            },
+            "doc_id": {
+              "type": "integer"
+            },
+            "sim": {
+              "type": "number"
+            },
+            "score": {
+              "type": "number"
+            }
+          }
+        }
+      }
+    }
+  },
+  "ImportAccepted": {
+    "type": "object",
+    "required": [
+      "ok",
+      "job_id"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "job_id": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{32}$"
+      },
+      "status": {
+        "enum": [
+          "queued"
+        ]
+      },
+      "duplicate": {
+        "type": "boolean"
+      }
+    }
+  },
+  "ImportJob": {
+    "type": "object",
+    "required": [
+      "job_id",
+      "status",
+      "stage",
+      "progress",
+      "attempts"
+    ],
+    "properties": {
+      "job_id": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{32}$"
+      },
+      "status": {
+        "enum": [
+          "queued",
+          "running",
+          "ok",
+          "failed"
+        ]
+      },
+      "stage": {
+        "type": "string"
+      },
+      "progress": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "attempts": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "owner_retries": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "next_attempt_at": {
+        "type": [
+          "number",
+          "null"
+        ]
+      },
+      "url": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "error_category": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "doc_id": {
+        "type": "integer"
+      },
+      "chunks": {
+        "type": "integer"
+      },
+      "embedded": {
+        "type": "integer"
+      }
+    }
+  }
+}

@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from security.mail import email_address, mail_settings, send_code
 from security.store import AccessError
+from security.connections import capabilities as describe_capabilities, principal_info
 
 log = logging.getLogger("bifrost.security")
 
@@ -59,15 +60,12 @@ def read_routes(get_store, require_token, safely):
     @api.get("/api/auth/me")
     @safely("auth_me")
     def me(request: Request, _=Depends(require_token)):
-        return {"id": request.state.principal.id, "scopes": sorted(request.state.principal.scopes)}
+        return principal_info(request.state.principal)
 
     @api.get("/api/capabilities")
     @safely("capabilities")
-    def capabilities(_=Depends(require_token)):
-        return {"authentication": "Bearer", "scopes": ["read", "ingest"],
-                "append_routes": ["/api/ingest/text", "/api/ingest/url"],
-                "idempotency": "Idempotency-Key", "limits": get_store().limits,
-                "destructive_operations": False}
+    def capabilities(request: Request, _=Depends(require_token)):
+        return describe_capabilities(get_store(), request)
 
     @api.get("/api/admin/settings")
     @safely("security_settings")

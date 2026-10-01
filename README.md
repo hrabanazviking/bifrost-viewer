@@ -6,6 +6,21 @@
 
 # Bifröst
 
+## Human workspace and AI connections
+
+Open the desktop **Second Brain** launcher or the configured server origin. The
+home screen offers search, passage reading, note/page imports and progress;
+**Explore graph** keeps the original 3D map. **Connect an AI** provides a guided
+setup and downloadable Markdown; **Settings** manages recovery, individual keys
+and the advertised network address.
+
+- [AI connection guide](AI_CONNECT.md) — REST and MCP setup, scopes, quotas and retries.
+- [Portable client](clients/README_AI.md) — dependency-free REST and optional MCP stdio adapter.
+
+The client runs on the AI machine; all operations pass through the same server
+access controls. Cloud assistants need a reachable authorized REST integration
+or a host capable of running the adapter.
+
 ## Detailed manuals
 
 - [Second-brain user and operations manual](SECOND_BRAIN_MANUAL.md) — all components,

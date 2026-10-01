@@ -76,6 +76,7 @@ class IngestQueue:
             rows = db.execute("SELECT * FROM jobs WHERE (? OR principal=?) AND (? IS NULL OR id=?) ORDER BY created DESC LIMIT 100",
                               ("admin" in principal.scopes, principal.id, id, id)).fetchall()
         return [{"job_id": r["id"], "url": json.loads(r["payload"]).get("url"),
+                 "title": json.loads(r["payload"]).get("title"),
                  "status": r["status"], "started_at": datetime.fromtimestamp(r["created"]).isoformat(), "returncode": r["returncode"],
                  **detail(dict(r), self.store.directory),
                  "attempts": r["attempts"], "log_tail": "See private worker logs for details" if r["status"] == "failed" else ""} for r in rows]

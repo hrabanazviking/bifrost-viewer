@@ -5,7 +5,14 @@ PROJECT_LAWS.md in the project root for the soul, bones, and immutable rules.
 
 Endpoints
 ---------
-GET  /                              static page (3d-force-graph UI)
+GET  /                              human workspace
+GET  /explore                       preserved 3D graph
+GET  /connect                       AI connection center
+GET  /.well-known/bifrost.json      public credential-free discovery
+GET  /api/ai/openapi.json           scoped agent contract
+GET  /api/overview                  read-only corpus counts
+GET  /api/admin/connection          owner connection metadata
+POST /api/admin/connection          save advertised connection details
 GET  /api/health                    liveness + DB/ollama/cache check
 GET  /api/graph?level=chunk|doc     cached graph layer for chunks or docs
 GET  /api/graph/build-status        progress of the async graph build
@@ -72,6 +79,7 @@ from security.store import AccessError, SecurityStore
 from security.gateway import SecurityGateway, authorize
 from security.queue import IngestQueue
 from security.routes import router as security_router
+from security.connections import router as connection_router
 from runtime_support import atomic_json, valid_graph
 
 
@@ -1402,8 +1410,34 @@ def kg_status(_=Depends(require_token)):
 
 @app.get("/")
 def root():
-    return FileResponse(PROJECT / "static" / "index.html")
+    return FileResponse(PROJECT / "static" / "workspace.html")
 
+
+@app.get("/explore")
+def explore_page():
+    return FileResponse(PROJECT / "static/index.html")
+
+
+@app.get("/connect")
+def connect_page():
+    return FileResponse(PROJECT / "static/connect.html")
+
+
+@app.get("/AI_CONNECT.md")
+def agent_instructions():
+    return FileResponse(PROJECT / "AI_CONNECT.md", media_type="text/markdown", filename="AI_CONNECT.md")
+
+
+@app.get("/api/overview")
+@safely("overview")
+def overview(_=Depends(require_token)):
+    with db_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT (SELECT COUNT(*) FROM documents), (SELECT COUNT(*) FROM chunks)")
+        documents, chunks = cur.fetchone()
+    return orj({"documents": documents, "chunks": chunks})
+
+
+app.include_router(connection_router(get_security, require_token, safely))
 
 app.include_router(security_router(get_security, require_token, safely))
 app.add_middleware(SecurityGateway, get_store=get_security, host=BIND_HOST)

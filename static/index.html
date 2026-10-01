@@ -199,6 +199,8 @@
   </div>
 
   <div id="controls">
+    <button id="workspace-home">⌂ workspace</button>
+    <button id="connection-center">ᚱ connect an AI</button>
     <button id="security-settings">⚿ security &amp; recovery</button>
     <button onclick="refresh()">↻ rebuild graph</button>
   </div>
@@ -251,6 +253,8 @@ let TOKEN = params.get("token") || new URLSearchParams(location.hash.slice(1)).g
 params.delete("token");
 history.replaceState(null, "", location.pathname + (params.size ? "?" + params : ""));
 const AUTH = { headers: { Authorization: "Bearer " + TOKEN } };
+document.getElementById("workspace-home").onclick = () => location.assign("/#token=" + encodeURIComponent(TOKEN));
+document.getElementById("connection-center").onclick = () => location.assign("/connect#token=" + encodeURIComponent(TOKEN));
 document.getElementById("security-settings").onclick = () => location.assign("/security#token=" + encodeURIComponent(TOKEN));
 window.addEventListener("hashchange", () => {
   const incoming = new URLSearchParams(location.hash.slice(1)).get("token");

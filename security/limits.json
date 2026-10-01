@@ -35,5 +35,6 @@
   "url_timeout_seconds": 10,
   "url_redirects": 4,
   "url_dns_candidates": 4,
-  "url_payload_quota_bytes": 2097152
+  "url_payload_quota_bytes": 2097152,
+  "discovery_requests_per_hour": 120
 }

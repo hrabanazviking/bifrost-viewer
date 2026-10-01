@@ -346,3 +346,27 @@ JSON object using the owner bearer header. Read/append AI keys cannot call eithe
 route. API job status remains limited to its own identity. See the
 [ingest manual](../ingest/TECHNICAL_MANUAL.md#10-read-only-diagnosis-and-recovery-decisions)
 for CLI exit classes and the read-only database doctor.
+
+## Friendly workspace and AI connection center (2026-10-01)
+
+The default home is now a responsive human workspace with searchable passage
+excerpts, a reader, note/page append forms, service status and import progress.
+The existing 3D viewer is under **Explore graph** (`/explore`). The desktop launcher
+opens the new workspace using its private owner token as before.
+
+**Connect an AI** (`/connect`) provides a three-step setup, the advertised server
+address, REST/MCP templates, a credential-free MD handoff download and a read-only
+AI-key check. **Settings** groups recovery, key issuance, advanced quotas, the
+portable advertised address and retained import recovery. A new key is shown once
+and has a copy button. Saving an advertised address changes metadata; listeners,
+allowed Hosts, DNS and TLS still need appropriate deployment configuration.
+
+Read [../AI_CONNECT.md](../AI_CONNECT.md) for complete network, authentication,
+REST, idempotency, polling and MCP instructions; see the
+[portable client guide](../clients/README_AI.md) for Python integration.
+All agent tools use the same scoped REST gateway. Append MCP tools require an
+explicit client opt-in and an ingest-scoped key. No additional public MCP listener
+or database access is introduced. Browser activity polling pauses when hidden and
+honors server retry delays. Lost submissions keep their original operation ID
+while the page stays open; check activity before reloading. Secrets and drafts
+are never persisted in browser storage.

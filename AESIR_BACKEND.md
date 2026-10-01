@@ -26,6 +26,22 @@ and [operation and benchmarking](https://github.com/hrabanazviking/RuneForgeAI-P
 Earlier 8.1-second native measurements describe the historical integration
 release and are superseded for this exercised model/device.
 
+## Long prompts and native buffers
+
+The later native long-token slice uses four-token prefill for the exercised
+Llama 3.2 3B profile. The local engine decodes each packed weight block once for
+four input positions, preserving causal KV and the sequential numerical results.
+Authenticated native health exposes actual `prefill_batch`; operators can select
+`--prefill-batch 1` for the reference path. Four-token capacity adds 396 KiB of
+compact scratch, with shared scores/logits and unchanged F16 KV. Deadline checks
+occur at boundaries of at most four input tokens, then each output token.
+
+[Native long-token operation and verification](https://github.com/hrabanazviking/RuneForgeAI-Project-Aesir/blob/main/docs/NATIVE_LONG_TOKENS.md)
+provides controls and physical evidence. This does not change Bifröst request
+schemas, the default provider, external AI permissions or embeddings. Outside
+clients still use their individual Bifröst keys and documented append/rate limits.
+A native-engine improvement alone does not establish a current Ollama speed win.
+
 ## Configuration
 
 Edit the private root `.env` through a text editor; do not shell-source it.

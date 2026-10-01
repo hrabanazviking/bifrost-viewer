@@ -168,19 +168,17 @@ def test_watcher_uses_source_directory_and_separate_durable_state(monkeypatch, t
     assert calls[0][1]["cwd"] == source
 
 
-def test_viewer_uses_frozen_bundled_ingest_project(monkeypatch, tmp_path):
-    source = tmp_path / "ingest"
-    source.mkdir()
-    monkeypatch.setattr(viewer, "INGEST_DIR", source)
-    monkeypatch.setattr(viewer, "LOG_DIR", tmp_path)
-    monkeypatch.setattr(viewer, "_ingest_jobs", {})
-    calls = []
-    monkeypatch.setattr(subprocess, "Popen", lambda command, **kwargs: calls.append((command, kwargs)) or SimpleNamespace(pid=42))
-    result = viewer.ingest_url(viewer.IngestUrlRequest(url="https://example.org/test"))
-    assert result.status_code == 200
-    assert calls[0][0][:5] == ["uv", "run", "--frozen", "--project", str(source)]
-    assert calls[0][0][5] == str(source / "ingest.py")
-    assert calls[0][1]["cwd"] == str(source)
+def test_viewer_queue_uses_bundled_ingest_and_restricted_configuration(tmp_path, monkeypatch):
+    from security.queue import IngestQueue
+    from security import sandbox
+    monkeypatch.setattr(sandbox, "available", lambda: "/usr/bin/bwrap")
+    store = viewer.get_security()
+    env = tmp_path / "api.env"
+    queue = IngestQueue(store, tmp_path / "ingest", env)
+    command, environment = queue._command({"id": "fixed", "principal": "test-client", "kind": "url", "payload": '{"url":"https://example.org/test"}'})
+    assert command[-4:] == [str(tmp_path / "ingest/.venv/bin/python"), str(tmp_path / "ingest/ingest.py"), "add", "https://example.org/test"]
+    assert environment["INGEST_ENV_FILE"] == "/worker.env"
+    assert "INGEST_DB_URL" not in environment
 
 
 def test_malformed_explicit_url_batch_is_retained(monkeypatch, tmp_path):

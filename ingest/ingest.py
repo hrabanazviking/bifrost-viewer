@@ -20,6 +20,7 @@ import psycopg
 import typer
 from dotenv import load_dotenv
 from pgvector.psycopg import register_vector
+from psycopg.types.json import Jsonb
 from rich.console import Console
 from rich.table import Table
 
@@ -118,9 +119,8 @@ def parse_source(src: str) -> tuple[str, str, list[str]]:
     if src.startswith(("http://", "https://")):
         import trafilatura
 
-        downloaded = trafilatura.fetch_url(src)
-        if downloaded is None:
-            raise RuntimeError(f"Could not fetch URL: {src}")
+        from safe_fetch import fetch_public
+        downloaded = fetch_public(src)
         md = trafilatura.extract(downloaded, output_format="markdown") or ""
         meta = trafilatura.extract_metadata(downloaded)
         title = (meta.title if meta and meta.title else src)
@@ -133,7 +133,10 @@ def parse_source(src: str) -> tuple[str, str, list[str]]:
             raise FileNotFoundError(p)
         title = p.name
         content_type = p.suffix.lstrip(".") or "unknown"
-        if p.suffix.lower() == ".json":
+        if p.suffix.lower() == ".txt" and os.getenv("INGEST_API_JOB_ID"):
+            from unstructured.documents.elements import Text
+            elements = [Text(text=p.read_text(encoding="utf-8"))]
+        elif p.suffix.lower() == ".json":
             import json
             from unstructured.documents.elements import Text
             data = json.loads(p.read_text(encoding="utf-8"))
@@ -173,6 +176,13 @@ def add(source: str) -> None:
     if not texts:
         console.print("[red]No content extracted[/]")
         raise typer.Exit(1)
+    if os.getenv("INGEST_API_JOB_ID") and os.getenv("INGEST_SUBMISSION_TITLE"):
+        title = os.environ["INGEST_SUBMISSION_TITLE"]
+    metadata = {}
+    if os.getenv("INGEST_API_JOB_ID"):
+        metadata = {"api_job_id": os.environ["INGEST_API_JOB_ID"], "api_client_id": os.environ["INGEST_API_CLIENT_ID"]}
+        if not source.startswith(("https://", "http://")):
+            source = f"bifrost-api://{metadata['api_client_id']}/{metadata['api_job_id']}"
     console.print(f"  parsed → {len(texts)} chunks")
 
     h = hashlib.sha256("\n".join(texts).encode("utf-8")).hexdigest()
@@ -187,9 +197,9 @@ def add(source: str) -> None:
     embeddings = embed(texts)
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO documents (source, title, content_type, hash) VALUES (%s, %s, %s, %s) "
+            "INSERT INTO documents (source, title, content_type, hash, metadata) VALUES (%s, %s, %s, %s, %s) "
             "ON CONFLICT (hash) DO NOTHING RETURNING id",
-            (source, title, content_type, h),
+            (source, title, content_type, h, Jsonb(metadata)),
         )
         inserted = cur.fetchone()
         if inserted is None:

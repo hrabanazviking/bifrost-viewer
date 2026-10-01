@@ -13,6 +13,10 @@ Restart=on-failure
 RestartSec=5
 TimeoutStartSec=120
 TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=true
+RestrictSUIDSGID=true
+TasksMax=256
 # Memory ceiling so a runaway UMAP can't take down the system
 MemoryMax=12G
 # Don't multiply restarts in a crash loop

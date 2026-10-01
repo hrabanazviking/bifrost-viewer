@@ -50,6 +50,20 @@ class IngestResilienceTests(unittest.TestCase):
         embed.assert_not_called()
         cursor.executemany.assert_not_called()
 
+    def test_api_append_records_server_assigned_provenance(self):
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchone.side_effect = [None, (42,)]
+        env = {"INGEST_API_JOB_ID": "job123", "INGEST_API_CLIENT_ID": "client123", "INGEST_SUBMISSION_TITLE": "Submitted document"}
+        with patch.dict(os.environ, env), patch.object(ingest, "parse_source", return_value=("uuid.txt", "txt", ["text"])), patch.object(ingest, "get_conn", return_value=connection), patch.object(ingest, "embed", return_value=[[1, 2]]):
+            ingest.add("/private/payload.txt")
+        insert = cursor.execute.call_args_list[1].args
+        self.assertEqual(insert[1][0], "bifrost-api://client123/job123")
+        self.assertEqual(insert[1][1], "Submitted document")
+        self.assertEqual(insert[1][4].obj, {"api_job_id": "job123", "api_client_id": "client123"})
+        connection.commit.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -199,6 +199,7 @@
   </div>
 
   <div id="controls">
+    <button id="security-settings">⚿ security &amp; recovery</button>
     <button onclick="refresh()">↻ rebuild graph</button>
   </div>
 
@@ -247,11 +248,18 @@
 <script>
 const params = new URLSearchParams(location.search);
 let TOKEN = params.get("token") || new URLSearchParams(location.hash.slice(1)).get("token") || "";
-if (params.has("token")) {
-  params.delete("token");
-  history.replaceState(null, "", location.pathname + (params.size ? "?" + params : "") + "#token=" + encodeURIComponent(TOKEN));
-}
+params.delete("token");
+history.replaceState(null, "", location.pathname + (params.size ? "?" + params : ""));
 const AUTH = { headers: { Authorization: "Bearer " + TOKEN } };
+document.getElementById("security-settings").onclick = () => location.assign("/security#token=" + encodeURIComponent(TOKEN));
+window.addEventListener("hashchange", () => {
+  const incoming = new URLSearchParams(location.hash.slice(1)).get("token");
+  if (incoming) {
+    TOKEN = incoming; AUTH.headers.Authorization = "Bearer " + TOKEN;
+    history.replaceState(null, "", location.pathname);
+    startViewer();
+  }
+});
 
 let Graph = null;
 let rawData = null;
@@ -846,6 +854,16 @@ function showLoadError(error) {
   document.getElementById("retry-load").onclick = () => startViewer();
 }
 async function startViewer() {
+  try {
+    const identity = await api("/api/auth/me");
+    const admin = identity.scopes.includes("admin");
+    document.querySelector('#controls button[onclick="refresh()"]').disabled = !admin;
+    document.getElementById("btn-skein-build").disabled = !admin;
+    document.getElementById("btn-cluster-names").disabled = !admin;
+    document.getElementById("ingest-btn").disabled = !identity.scopes.includes("ingest");
+    document.getElementById("security-settings").textContent = admin ? "⚿ security & recovery" : "⚿ owner settings & recovery";
+  } catch (_) {}
+
   document.getElementById("loading").innerHTML = '<div class="ghost">opening the bridge…</div>';
   try {
     await api("/api/health");
@@ -862,7 +880,7 @@ if (!TOKEN) {
     <h2>Open your second brain</h2>
     <label for="viewer-token">Access token</label>
     <input id="viewer-token" type="password" autocomplete="off" required />
-    <button type="submit">OPEN BIFRÖST</button>
+    <button type="submit">OPEN BIFRÖST</button><p><a href="/security">Recover access by email</a></p>
     <p>Use the Bifröst Second Brain desktop launcher to sign in automatically.</p>
     <div id="sign-in-error" role="alert"></div></form>`;
   document.getElementById("sign-in").onsubmit = async event => {

@@ -72,3 +72,13 @@ rainbow gradient for the BIFRÖST title (mirroring the actual rainbow bridge),
 HSL-distributed hues for entity kinds and document colors, panel-style
 glass-blur surfaces with cyan borders. Keep this. Sparkly, glowing,
 constellation-like. The corpus deserves drama.
+
+## Owner security interface
+
+security.html/security.js/security.css own owner settings, TLS SMTP entry, verified
+email changes, scoped key issuance/revocation, explicit locking and public recovery.
+They use bearer headers, clear password/code fields after submission, keep credentials
+in page memory and consume/strip token fragments on initial load or hash navigation.
+Sensitive values must not go into localStorage, logs or unsanitized HTML. The legacy
+viewer uses /api/auth/me to disable controls not granted by the current key. Keep
+security/INTERFACE.md and its behavioral tests aligned when changing these flows.

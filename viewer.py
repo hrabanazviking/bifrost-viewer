@@ -18,8 +18,9 @@ GET  /api/skein/status              Skein KG build state + counts
 POST /api/skein/build               kick off Skein build in background
 GET  /api/skein/graph               entity graph (UMAP-projected) for 3D rendering
 GET  /api/skry?q=…                  query-time entity neighborhood
-POST /api/ingest/url                start a URL ingest job (bundled ingest subprocess)
-GET  /api/ingest/jobs               list all URL ingest jobs known this session
+POST /api/ingest/url                queue a bounded URL ingest job
+POST /api/ingest/text               queue a bounded text document
+GET  /api/ingest/jobs               list retained ingest jobs visible to this key
 GET  /api/ingest/jobs/{id}          status of a specific URL ingest job
 GET  /api/gpu                       nvidia-smi snapshot (cached 1.5 s)
 GET  /api/kg/status                 legacy llama-per-chunk batch progress (kept for comparison)
@@ -44,7 +45,6 @@ import datetime
 import asyncio
 import logging
 import os
-import secrets
 import sys
 import threading
 import time
@@ -59,12 +59,17 @@ import numpy as np
 import orjson
 import psycopg
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pgvector.psycopg import register_vector
 from psycopg_pool import ConnectionPool
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from security.store import AccessError, SecurityStore
+from security.gateway import SecurityGateway, authorize
+from security.queue import IngestQueue
+from security.routes import router as security_router
 from runtime_support import atomic_json, valid_graph
 
 
@@ -72,7 +77,12 @@ from runtime_support import atomic_json, valid_graph
 
 class IngestUrlRequest(BaseModel):
     """POST body for /api/ingest/url. See docs/bugs/0009 for why this exists."""
-    url: str
+    url: str = Field(min_length=1, max_length=4096)
+
+
+class IngestTextRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200, pattern=r"^[^\x00-\x1f\x7f]+$")
+    text: str = Field(min_length=1, max_length=200000)
 
 # ─── config ─────────────────────────────────────────────────────────────────
 
@@ -83,6 +93,28 @@ DB_URL = os.environ["VIEWER_DB_URL"]
 BIND_HOST = os.environ.get("VIEWER_BIND_HOST", "127.0.0.1")
 PORT = int(os.environ.get("VIEWER_PORT", "8731"))
 TOKEN = os.environ["VIEWER_TOKEN"]
+SECURITY_DIR = Path(os.getenv("VIEWER_SECURITY_DIR", str(Path(os.getenv("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "bifrost")))
+_security_store = None
+_ingest_queue = None
+_security_lock = threading.RLock()
+
+
+def get_security():
+    global _security_store
+    with _security_lock:
+        if _security_store is None:
+            _security_store = SecurityStore(SECURITY_DIR, TOKEN, os.getenv("VIEWER_RECOVERY_EMAIL", ""))
+        return _security_store
+
+
+def get_ingest_queue():
+    global _ingest_queue
+    with _security_lock:
+        if _ingest_queue is None:
+            env = Path(os.getenv("VIEWER_API_INGEST_ENV_FILE", str(SECURITY_DIR / "ingest.env")))
+            _ingest_queue = IngestQueue(get_security(), INGEST_DIR, env)
+        return _ingest_queue
+
 EDGE_TOP_K = int(os.environ.get("VIEWER_EDGE_TOP_K", "4"))
 EDGE_MIN_SIM = float(os.environ.get("VIEWER_EDGE_MIN_SIM", "0.55"))
 HDBSCAN_MIN_CLUSTER = int(os.environ.get("VIEWER_HDBSCAN_MIN_CLUSTER", "8"))
@@ -137,7 +169,7 @@ def get_pool() -> ConnectionPool:
         if _pool is None or _pool.closed:
             _pool = ConnectionPool(
                 DB_URL, min_size=1, max_size=8, timeout=DB_TIMEOUT,
-                kwargs={"autocommit": False, "connect_timeout": max(1, int(DB_TIMEOUT))},
+                kwargs={"autocommit": False, "connect_timeout": max(1, int(DB_TIMEOUT)), "options": "-c statement_timeout=30000 -c lock_timeout=5000"},
                 configure=_configure_conn, open=True,
             )
             log.info("opened DB connection pool")
@@ -179,10 +211,12 @@ async def lifespan(app: FastAPI):
         get_pool()
     except Exception as e:
         log.warning("DB pool could not open at startup (will retry on demand): %s", e)
+    get_ingest_queue().start()
     maintenance = asyncio.create_task(_maintenance_loop())
     try:
         yield
     finally:
+        get_ingest_queue().stop()
         maintenance.cancel()
         try:
             await maintenance
@@ -208,25 +242,19 @@ def orj(payload: Any, status_code: int = 200) -> Response:
     return Response(content=body, status_code=status_code, media_type="application/json")
 
 
-def require_token(request: Request, token: str | None = Query(default=None)) -> None:
-    """FastAPI dependency: guard endpoints with the shared bearer token.
+@app.exception_handler(RequestValidationError)
+async def invalid_request(request: Request, exc: RequestValidationError):
+    return orj({"error": "Invalid request data", "details": [
+        {"location": list(error["loc"]), "message": error["msg"], "type": error["type"]}
+        for error in exc.errors()]}, 422)
 
-    Accepts the token via ``?token=…`` query param OR an
-    ``Authorization: Bearer …`` header. Comparison uses
-    `secrets.compare_digest` (constant-time, per Law of Token Discipline).
 
-    Raises ``HTTPException(401)`` on bad/missing token. On success returns
-    ``None`` — the function's value is intentionally not used by callers
-    (docs/bugs/0018 made this explicit).
-    """
-    supplied = token
-    if not supplied:
-        auth = request.headers.get("authorization", "")
-        if auth.lower().startswith("bearer "):
-            supplied = auth[7:].strip()
-    if not supplied or not secrets.compare_digest(supplied, TOKEN):
-        raise HTTPException(status_code=401, detail="bad or missing token")
-    return None
+def require_token(request: Request):
+    """All data routes require a credential with the needed scope."""
+    try:
+        return getattr(request.state, "principal", None) or authorize(get_security(), request.scope)
+    except AccessError as exc:
+        raise HTTPException(exc.status, detail=str(exc)) from None
 
 
 def safely(name: str):
@@ -238,11 +266,15 @@ def safely(name: str):
         def inner(*args, **kwargs):
             try:
                 return fn(*args, **kwargs)
+            except AccessError as exc:
+                return Response(orjson.dumps({"error": str(exc)}), status_code=exc.status,
+                                media_type="application/json",
+                                headers={"Retry-After": str(exc.retry)} if exc.retry else {})
             except HTTPException:
                 raise
             except Exception as e:
                 log.warning("endpoint %s failed: %s\n%s", name, e, traceback.format_exc())
-                return orj({"error": str(e), "endpoint": name}, status_code=500)
+                return orj({"error": "Service operation failed; see private server logs", "endpoint": name}, status_code=500)
         return inner
     return wrap
 
@@ -976,6 +1008,8 @@ def search(q: str, k: int = 12, hyde: int = 0, _=Depends(require_token)):
         raise HTTPException(status_code=400, detail="empty query")
     if k < 1 or k > 100:
         raise HTTPException(status_code=400, detail="k must be in [1, 100]")
+    if len(q) > 10000:
+        raise HTTPException(status_code=400, detail="query too long (max 10000 chars)")
     hyde_doc = None
     if hyde:
         try:
@@ -1214,88 +1248,40 @@ def skry_lookup(q: str, top_chunks: int = 60, top_entities: int = 20,
 # ─── URL ingest ─────────────────────────────────────────────────────────────
 
 INGEST_DIR = Path(os.getenv("VIEWER_INGEST_PROJECT_DIR", str(PROJECT / "ingest"))).expanduser().resolve()
-_ingest_jobs: dict[str, dict] = {}   # job_id → {proc, started_at, url, status, returncode, log_path}
-_ingest_lock = threading.Lock()
-
-
-def _ingest_job_state(job_id: str) -> dict | None:
-    with _ingest_lock:
-        j = _ingest_jobs.get(job_id)
-        if not j:
-            return None
-        proc = j["proc"]
-        running = proc.poll() is None
-        state = "running" if running else ("ok" if proc.returncode == 0 else "failed")
-        out = {
-            "job_id": job_id, "url": j["url"], "status": state,
-            "started_at": j["started_at"],
-            "returncode": proc.returncode if not running else None,
-            "log_tail": "",
-        }
-        try:
-            log_text = Path(j["log_path"]).read_text(encoding="utf-8", errors="replace")
-            out["log_tail"] = log_text[-2000:]
-        except Exception:
-            pass
-        return out
-
-
 @app.post("/api/ingest/url")
 @safely("ingest_url")
-def ingest_url(payload: IngestUrlRequest, _=Depends(require_token)):
-    """Spawn an ingest subprocess for one URL. See docs/bugs/0009 (Pydantic
-    model added), docs/bugs/0007 (log handle leak fixed)."""
-    import subprocess
-    import uuid
-    url = payload.url.strip()
-    if not url:
-        raise HTTPException(status_code=400, detail="missing 'url'")
-    if not (url.startswith("http://") or url.startswith("https://")):
-        raise HTTPException(status_code=400, detail="url must start with http:// or https://")
-    if len(url) > 4096:
-        raise HTTPException(status_code=400, detail="url too long (max 4096 chars)")
-    if not INGEST_DIR.exists():
-        raise HTTPException(status_code=500, detail=f"ingest project not found at {INGEST_DIR}")
-    job_id = uuid.uuid4().hex[:12]
-    log_path = LOG_DIR / f"ingest_{job_id}.log"
-    log_file = open(log_path, "w")
+def ingest_url(payload: IngestUrlRequest, request: Request, principal=Depends(require_token)):
+    from ingest.safe_fetch import destination
     try:
-        proc = subprocess.Popen(
-            ["uv", "run", "--frozen", "--project", str(INGEST_DIR), str(INGEST_DIR / "ingest.py"), "add", url],
-            cwd=str(INGEST_DIR), stdout=log_file, stderr=subprocess.STDOUT,
-        )
-    finally:
-        log_file.close()   # parent's dup; subprocess has its own
-    with _ingest_lock:
-        _ingest_jobs[job_id] = {
-            "proc": proc, "url": url,
-            "started_at": datetime.datetime.now().isoformat(),
-            "log_path": str(log_path),
-        }
-    log.info("started URL ingest job=%s pid=%s url=%s", job_id, proc.pid, url)
-    return orj({"ok": True, "job_id": job_id, "url": url})
+        destination(payload.url.strip())
+    except (ValueError, OSError):
+        raise AccessError("URL must resolve exclusively to public HTTP(S) web addresses", 400) from None
+    return orj(get_ingest_queue().submit(principal, "url", {"url": payload.url.strip()}, request.headers.get("Idempotency-Key")))
+
+
+@app.post("/api/ingest/text")
+@safely("ingest_text")
+def ingest_text(payload: IngestTextRequest, request: Request, principal=Depends(require_token)):
+    if not payload.text.strip():
+        raise AccessError("Document text cannot be empty", 400)
+    if "\x00" in payload.text:
+        raise AccessError("Document text cannot contain NUL characters", 400)
+    return orj(get_ingest_queue().submit(principal, "text", payload.model_dump(), request.headers.get("Idempotency-Key")))
 
 
 @app.get("/api/ingest/jobs/{job_id}")
 @safely("ingest_job_status")
-def ingest_job_status(job_id: str, _=Depends(require_token)):
-    state = _ingest_job_state(job_id)
-    if state is None:
+def ingest_job_status(job_id: str, principal=Depends(require_token)):
+    states = get_ingest_queue().states(principal, job_id)
+    if not states:
         raise HTTPException(status_code=404, detail="no such job")
-    return orj(state)
+    return orj(states[0])
 
 
 @app.get("/api/ingest/jobs")
 @safely("ingest_jobs_list")
-def ingest_jobs_list(_=Depends(require_token)):
-    """All ingest jobs spawned this session. See docs/bugs/0003 for the
-    lock-discipline reasoning behind iterating inside the lock."""
-    with _ingest_lock:
-        ids = list(_ingest_jobs.keys())
-    # _ingest_job_state acquires the lock itself; the worst case of an entry
-    # being evicted between the snapshot above and the per-id call is a None
-    # we filter out — currently we never evict, but the pattern is safe.
-    return orj([s for s in (_ingest_job_state(i) for i in ids) if s])
+def ingest_jobs_list(principal=Depends(require_token)):
+    return orj(get_ingest_queue().states(principal))
 
 
 # ─── GPU gauge ──────────────────────────────────────────────────────────────
@@ -1392,6 +1378,14 @@ def root():
     return FileResponse(PROJECT / "static" / "index.html")
 
 
+app.include_router(security_router(get_security, require_token, safely))
+app.add_middleware(SecurityGateway, get_store=get_security, host=BIND_HOST)
+
+@app.get("/security")
+def security_page():
+    return FileResponse(PROJECT / "static/security.html")
+
+
 app.mount("/static", StaticFiles(directory=str(PROJECT / "static")), name="static")
 
 
@@ -1402,8 +1396,8 @@ app.mount("/static", StaticFiles(directory=str(PROJECT / "static")), name="stati
 
 if __name__ == "__main__":
     # docs/bugs/0008: never print the real token to logs. Operator can read
-    # VIEWER_TOKEN from .env if they need the URL.
-    log.info("Bifröst on http://%s:%s/?token=***  (token in VIEWER_TOKEN env var)",
+    # The local launcher reads the owner token from private security state.
+    log.info("Bifröst on configured listener %s:%s (use the local owner launcher)",
              BIND_HOST, PORT)
     from local_server import serve
     serve(app, host=BIND_HOST, loopback=LOOPBACK_HOST, port=PORT)

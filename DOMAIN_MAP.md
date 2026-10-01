@@ -20,7 +20,8 @@
 **Forbidden from:**
 - Touching the database directly.
 - Calling Ollama directly.
-- Holding any secret beyond the URL-supplied token.
+- Persisting credentials in browser storage. Owner settings may collect an SMTP
+  password transiently, send it to the authenticated local service, then clear it.
 - Performing any computation longer than a single animation frame.
 
 ### 2. The Mind and Rules — `viewer.py` (route layer)
@@ -110,3 +111,11 @@ library, a TUI, even a screensaver) without touching the Mind. The Mind can
 be repointed at a different Postgres or a different Ollama without touching
 the Face. The Deep Memory can grow new tables without Bifröst caring, as
 long as the public columns of `documents` and `chunks` stay stable.
+
+## Security and delegated admission — `security/`
+
+Owns private credentials, verification/recovery, SMTP transport settings, HTTP
+admission and persistent bounded append jobs. It cannot alter source tables.
+Only the bundled ingest subprocess writes source rows, using its restricted
+SELECT/INSERT role for HTTP submissions. Owner-only local inbox ingestion remains
+independently configured. Read security/INTERFACE.md before changing this boundary.

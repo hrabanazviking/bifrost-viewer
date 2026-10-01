@@ -196,3 +196,28 @@ Ingest sources, schema, lockfile and five regression tests now live under ingest
 The watcher and URL route execute this published source in its own frozen runtime.
 Private dotenv and durable inbox paths remain independently configurable. Local
 legacy entry points forward to the bundled code. See TASK_ingest_integration.md.
+
+## 2026-09-30 — portable recovery and bounded AI access
+
+Implemented TASK_secure_access.md using the documented owner/read/append boundary.
+Strong owner credentials, expiring/revocable AI keys, verified email changes and
+single-use recovery now live in private SQLite state. TLS SMTP settings are editable
+without returning saved passwords. Generic recovery acknowledgements, hashed codes,
+transactional confirmation and stale-email race checks preserve existing access
+until confirmation. Existing shared access has a one-day read-only migration period.
+
+HTTP admission now checks transport, hosts, origins, body/header sizes, timeouts,
+weighted per-key/global budgets and expensive-query concurrency. Forwarding headers
+are ignored. Persistent API jobs use transactional idempotency/quota reservation,
+bounded storage/logs, retries/deadlines and serial resource-limited Bubblewrap workers.
+Their environment is allowlisted, owner files are hidden, and their PostgreSQL account
+has SELECT/INSERT without update/delete/schema privileges. Public URL sockets pin
+validated addresses, check each redirect and preserve TLS hostname validation.
+Source tables and trusted inbox state remain owned by the ingest component.
+
+Validation: 69 regression tests and changed-module Ruff pass; live read/owner/revocation,
+idempotency, restricted-role/sandbox/provenance and GPU-backed ingest checks pass.
+Two small maintenance canaries were added; original source rows were preserved.
+The current document graph rebuilt successfully after those additions. Gmail TLS
+negotiation works, but delivery/recipient verification still requires a user-entered
+SMTP app password. No successful email delivery is claimed before that setup.

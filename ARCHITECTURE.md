@@ -192,3 +192,20 @@ than writing source tables. URL jobs use uv run --frozen --project ingest. The
 watcher uses that same source runtime, with INGEST_ENV_FILE and INGEST_STATE_DIR
 pointing to private configuration and durable inbox storage independently. Existing
 local sibling entry points forward to the bundled source for compatibility.
+
+## Portable security boundary
+
+SecurityGateway admits requests before body parsing, checks transport/host/origin,
+verifies bearer scopes, and enforces weighted quotas and expensive-query concurrency.
+SecurityStore serializes recovery, key revocation and job admission in private SQLite
+transactions. API keys have hashes; the owner launcher credential and SMTP password
+are recoverable secrets protected by filesystem permissions. This does not protect
+against an attacker already controlling the local user account.
+
+IngestQueue supervises one bounded subprocess at a time. Idempotency and quota
+admission commit together; interrupted jobs recover after restart and document
+hashes prevent duplicate writes. The worker uses its own restricted PostgreSQL role,
+not the viewer database owner. safe_fetch pins validated public addresses and checks
+every redirect. Local trusted inbox ingestion remains a separate existing supervisor.
+
+Owner UI and protocol details live in security/README_AI.md and security/INTERFACE.md.

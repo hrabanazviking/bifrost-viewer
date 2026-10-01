@@ -1,6 +1,8 @@
 # Bifrost HTTP contracts
 
-All /api routes require the existing bearer token or legacy query token.
+All data /api routes require a scoped bearer token or the compatible query token.
+Public recovery routes expose generic request acknowledgements and accept only
+single-use expiring confirmation codes. See security/INTERFACE.md.
 GET / returns the static page with an access-token form. The local launcher places
 its token in a URL fragment, which is never part of the HTTP request URL.
 
@@ -24,5 +26,7 @@ so editing existing source rows in place still requires a forced rebuild.
 POST /api/ingest/url now delegates to the bundled ingest/ subproject with its
 frozen environment. Its job/status response shape is unchanged.
 VIEWER_INGEST_PROJECT_DIR optionally selects another source project;
-INGEST_ENV_FILE selects private CLI configuration inherited by the subprocess.
+VIEWER_API_INGEST_ENV_FILE selects the separate append-only configuration for
+HTTP workers. Their environment is allowlisted and their filesystem/processes
+are isolated with Bubblewrap. INGEST_ENV_FILE selects trusted local CLI configuration.
 The watcher separately uses INGEST_PROJECT_DIR and INGEST_STATE_DIR.

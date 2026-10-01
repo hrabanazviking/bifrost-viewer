@@ -38,7 +38,8 @@ same database, each with one job:
 - **Semantic path-finder** — shift+click any two chunks to render the shortest similarity-graph path between them.
 - **LLM cluster naming** — HDBSCAN topic clusters, named on-demand by a local llama.
 - **GPU gauge** — live nvidia-smi readout in the corner so you can watch utilization, VRAM, temp, and power as builds run.
-- **URL ingest** — paste a URL into the top-right field and the page fetches it via [trafilatura](https://trafilatura.readthedocs.io/), chunks it, embeds it, and adds it to the corpus.
+- **Safe AI access and ingestion** — issue expiring read/append keys; a durable bounded queue adds text or public web URLs using an append-only database role.
+- **Owner recovery** — verify a configurable email address and exchange a short-lived, single-use emailed code for a replacement owner credential. TLS SMTP settings stay private.
 - **Async builds** — heavy graph rebuilds run in a subprocess so the server stays responsive. The loader shows live stage + progress; no silent hangs.
 
 ## Aesthetic
@@ -49,6 +50,7 @@ Cyber-Viking. Deep space-blue background, glowing neon rainbow on the title (lit
 
 ## Prerequisites
 
+- **Linux with Bubblewrap (`bwrap`) and user namespaces** for isolated HTTP ingestion. It fails closed if isolation is unavailable.
 - **Python 3.13+**
 - **Postgres 14+** with the `vector` and `pg_trgm` extensions, and tables that match the standard ingest layout:
   ```sql
@@ -70,13 +72,14 @@ git clone https://github.com/hrabanazviking/skry-kg      ~/ai/skry-kg
 
 cd ~/ai/ingest-viewer
 cp .env.example .env
-$EDITOR .env            # set VIEWER_TOKEN to a real secret, point DB/Ollama at your hosts
+$EDITOR .env            # point DB/Ollama at your hosts; leave migration token blank for a new install
 uv sync
 uv run viewer.py
 ```
 
-Open **http://localhost:8731/** and enter the `VIEWER_TOKEN` configured in `.env`.
-The Bifröst Second Brain desktop launcher reads that file and signs in automatically.
+Run `uv run --frozen python scripts/open_brain.py` or use the Bifröst Second Brain desktop launcher. It opens with the strong owner credential from private user state. Open **Security & recovery** to configure SMTP, verify the recovery address, and issue AI keys. The optional old `VIEWER_TOKEN` becomes read-only for one day after migration.
+
+See [security/README_AI.md](security/README_AI.md) for append-role setup, email, HTTPS, quotas and portable state.
 See [ingest/README.md](ingest/README.md) to install document/URL ingestion and retain
 an existing private inbox.
 

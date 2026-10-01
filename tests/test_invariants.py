@@ -75,7 +75,7 @@ def test_module_level_locks_present():
     expected_pairs = [
         ("_gpu_cache", "_gpu_cache_lock"),
         ("_skein_build_proc", "_skein_build_proc_lock"),
-        ("_ingest_jobs", "_ingest_lock"),
+        ("_ingest_queue", "_security_lock"),
         ("_build_proc", "_build_proc_lock"),
     ]
     for d, lock in expected_pairs:
@@ -122,7 +122,8 @@ def test_startup_log_masks_token():
 
 def test_secrets_compare_digest_used():
     """Token comparison uses constant-time secrets.compare_digest, not =="""
-    src = inspect.getsource(viewer)
+    from security import store
+    src = inspect.getsource(store)
     assert "secrets.compare_digest" in src, "token compare must use secrets.compare_digest"
 
 

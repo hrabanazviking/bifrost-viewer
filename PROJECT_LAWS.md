@@ -13,7 +13,7 @@ source now lives in `ingest/` in this repository. **The Bifröst viewer may read
 them; the viewer may not write to them, modify them,
 or schema-migrate them.** Bifröst's own tables are `skein_*` (managed by the
 `skein-kg` library) and `kg_*` (legacy llama-extraction tables, kept for
-comparison). Bifröst writes only to its own tables and to `.cache/`.
+comparison). Bifröst writes only to its own PostgreSQL tables, `.cache/`, and private local security metadata. The HTTP ingestion queue invokes the separate append-only ingest worker.
 
 ## Law of Fault Tolerance
 
@@ -45,10 +45,13 @@ document-write connection and transaction.
 
 ## Law of Token Discipline
 
-Every endpoint that exposes data requires `Depends(require_token)`. Token may
-arrive via `?token=…` or `Authorization: Bearer …`. The viewer binds to the
-tailscale interface, not localhost, but the token is the actual gate — do not
-assume the network protects you.
+Every endpoint that exposes data requires `Depends(require_token)` and a scope
+check. Tokens may arrive via `?token=…` or `Authorization: Bearer …`; headers
+are preferred and URL tokens are promptly removed from browser history. Owner,
+read and append privileges remain separate. Public recovery routes disclose no
+knowledge and require expiring single-use codes before replacing owner access.
+The viewer binds loopback plus a configured interface. Non-local peers require
+HTTPS or the encrypted tailnet listener; authentication is still mandatory.
 
 ## Law of Fingerprinted Caches
 

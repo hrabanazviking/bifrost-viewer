@@ -38,3 +38,10 @@ choose a matching embedding model or deliberately adapt a fresh schema.
 Failed inputs remain retained. Retries resume after restarts, completed URLs are
 not repeated, and archives never overwrite an earlier input. Configuration,
 inbox contents and runtime environments are ignored by Git.
+
+HTTP ingestion now uses a separate restricted PostgreSQL role and isolated worker.
+See [security operations](../security/README_AI.md); trusted local inbox configuration
+is not inherited by API workers. API text preserves its UTF-8 text, uses a generated
+payload path, and records server-assigned client/job provenance. URL fetching uses
+safe_fetch.py: public addresses/ports only, pinned sockets, validated redirects,
+verified TLS and bounded uncompressed responses. Source-table ownership stays here.

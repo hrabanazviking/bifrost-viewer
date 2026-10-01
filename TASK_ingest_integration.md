@@ -32,3 +32,17 @@ artifacts, then commit, push and verify remote main matches the tested source.
 
 The current configured access token was read locally and successfully checked
 against the running API. Its value belongs in private configuration, not this file.
+
+## Completed verification
+
+32 combined viewer/ingest tests pass, including the two new source/state boundary
+tests and the five migrated ingest regressions. The separate frozen ingest runtime
+passes its five tests and dependency compatibility check. Changed Python sources
+pass Ruff and Git whitespace checks. The installed watcher now executes the bundled
+source with the existing private dotenv and inbox paths. Both services are active.
+A live duplicate-safe canary completed without changing the 1235-document/49004-chunk
+corpus. A live URL-ingest job executed the bundled runtime and correctly reported
+an intentionally unreachable local source as failed. Legacy CLI invocation and its
+five tests still work through the compatibility entry point. API access with the
+existing configured token was verified successfully. No credentials or inbox data
+are part of the staged source.

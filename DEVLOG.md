@@ -189,3 +189,10 @@ each subtask completes. Highlights to be appended here at session close.
 Implemented the authorized task in TASK_second_brain_resilience.md. Preserved source
 corpus and private configuration. Added behavioral regressions, verified live boundaries,
 and documented recovery contracts. Validation details are recorded in the task report.
+
+## 2026-09-30 — publish the complete ingest component
+
+Ingest sources, schema, lockfile and five regression tests now live under ingest/.
+The watcher and URL route execute this published source in its own frozen runtime.
+Private dotenv and durable inbox paths remain independently configurable. Local
+legacy entry points forward to the bundled code. See TASK_ingest_integration.md.

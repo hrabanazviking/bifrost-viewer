@@ -2,7 +2,7 @@
 
 ## Boundaries
 
-PostgreSQL owns documents and chunks. The optional sibling ingest CLI owns ingestion.
+PostgreSQL owns documents and chunks. The bundled ingest/ CLI owns ingestion.
 Bifrost owns authenticated display/search, disposable layouts and supervision.
 Skein writes only derived skein tables; Skry remains read-only.
 
@@ -27,15 +27,20 @@ Chunk edge selection and cluster propagation operate in row blocks. Document
 view uses sparse nearest-neighbor edges, avoiding a nearly complete graph. Entity
 layout runs in another interpreter so UMAP cannot block web request handlers.
 
-## Optional inbox supervisor
+## Bundled inbox supervisor
 
-Use scripts/watch_inbox.py with INGEST_PROJECT_DIR pointing to the ingest project.
-The installed sibling watch.py may invoke this script as a compatibility entry point.
-The CLI environment must contain the ingest project's dependencies. The supervisor
-retains inputs in inbox/failed and persists exponential retry times and completed
-URLs in inbox/.watch-state.json. Restarts resume retries. Archive collisions receive
-unique filenames. Empty or invalid URL lists stay retained for manual correction.
-Corrected files reset retry metadata; ordinary text files remain ordinary documents.
+Use the frozen ingest/ runtime to run scripts/watch_inbox.py. Its source defaults
+to the bundled ingest component. INGEST_ENV_FILE selects a private dotenv file;
+INGEST_STATE_DIR selects the directory containing the durable inbox. For another
+source project, set INGEST_PROJECT_DIR for the watcher and
+VIEWER_INGEST_PROJECT_DIR for viewer URL jobs. Keep .env, inbox inputs and retry
+metadata outside Git. The installed sibling entry points may forward to this code.
+
+The supervisor retains inputs in inbox/failed and persists exponential retry times
+and completed URLs in inbox/.watch-state.json. Restarts resume retries. Archive
+collisions receive unique filenames. Empty or invalid URL lists stay retained for
+manual correction. Corrected files reset retry metadata; ordinary text files remain
+ordinary documents. See ingest/INTERFACE.md for CLI/configuration contracts.
 
 The supervisor waits for file mtime to settle; producers writing huge files should
 write a hidden temporary filename and atomically rename it into the inbox when done.

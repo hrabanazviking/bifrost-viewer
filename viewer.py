@@ -18,7 +18,7 @@ GET  /api/skein/status              Skein KG build state + counts
 POST /api/skein/build               kick off Skein build in background
 GET  /api/skein/graph               entity graph (UMAP-projected) for 3D rendering
 GET  /api/skry?q=…                  query-time entity neighborhood
-POST /api/ingest/url                start a URL ingest job (subprocess to ../ingest/)
+POST /api/ingest/url                start a URL ingest job (bundled ingest subprocess)
 GET  /api/ingest/jobs               list all URL ingest jobs known this session
 GET  /api/ingest/jobs/{id}          status of a specific URL ingest job
 GET  /api/gpu                       nvidia-smi snapshot (cached 1.5 s)
@@ -1213,7 +1213,7 @@ def skry_lookup(q: str, top_chunks: int = 60, top_entities: int = 20,
 
 # ─── URL ingest ─────────────────────────────────────────────────────────────
 
-INGEST_DIR = PROJECT.parent / "ingest"
+INGEST_DIR = Path(os.getenv("VIEWER_INGEST_PROJECT_DIR", str(PROJECT / "ingest"))).expanduser().resolve()
 _ingest_jobs: dict[str, dict] = {}   # job_id → {proc, started_at, url, status, returncode, log_path}
 _ingest_lock = threading.Lock()
 
@@ -1261,7 +1261,7 @@ def ingest_url(payload: IngestUrlRequest, _=Depends(require_token)):
     log_file = open(log_path, "w")
     try:
         proc = subprocess.Popen(
-            ["uv", "run", "ingest.py", "add", url],
+            ["uv", "run", "--frozen", "--project", str(INGEST_DIR), str(INGEST_DIR / "ingest.py"), "add", url],
             cwd=str(INGEST_DIR), stdout=log_file, stderr=subprocess.STDOUT,
         )
     finally:

@@ -20,8 +20,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 log = logging.getLogger("ingest.watcher")
-PROJECT = Path(os.getenv("INGEST_PROJECT_DIR", str(Path(__file__).resolve().parents[2] / "ingest")))
-load_dotenv(PROJECT / ".env")
+PROJECT = Path(os.getenv("INGEST_PROJECT_DIR", str(Path(__file__).resolve().parents[1] / "ingest"))).expanduser().resolve()
+load_dotenv(Path(os.getenv("INGEST_ENV_FILE", str(PROJECT / ".env"))))
 
 
 def atomic_json(path: Path, payload: dict) -> None:
@@ -56,9 +56,10 @@ def read_urls(path: Path) -> list[str] | None:
 
 
 class InboxWorker:
-    def __init__(self, project: Path) -> None:
+    def __init__(self, project: Path, state_dir: Path | None = None) -> None:
         self.project = project
-        self.inbox = project / "inbox"
+        self.state_dir = state_dir if state_dir is not None else project
+        self.inbox = self.state_dir / "inbox"
         self.processed = self.inbox / "processed"
         self.failed = self.inbox / "failed"
         for folder in (self.inbox, self.processed, self.failed):
@@ -142,7 +143,7 @@ class InboxWorker:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    worker = InboxWorker(PROJECT)
+    worker = InboxWorker(PROJECT, state_dir=Path(os.getenv("INGEST_STATE_DIR", str(PROJECT))).expanduser().resolve())
     stopping = False
     def stop(signum: int, frame: object) -> None:
         nonlocal stopping

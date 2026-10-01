@@ -45,7 +45,7 @@ Skry library calls, ollama proxying.
 
 **Forbidden from (Bifröst's perspective):**
 - Being mutated by Bifröst beyond the `skein_*` and graph-build artifacts.
-  Documents and chunks are sacred and owned by the Ingest project.
+  Documents and chunks are sacred and owned by the separate Ingest component.
 
 ### 4. The Caches — `.cache/`
 
@@ -87,6 +87,17 @@ weaves the static entity graph; Skry performs query-time entity lookups.
   cut a release.
 
 ---
+
+### 7. Ingest Sources and Writes — `ingest/`
+
+**Responsibility:** File/URL parsing, chunk embeddings and atomic document/chunk
+persistence through a CLI in its own frozen runtime. The parent viewer delegates
+to the CLI. scripts/watch_inbox.py owns durable retries and input archives.
+
+**Boundaries:** Private dotenv and inbox storage may live outside the repository.
+Only the ingest process writes source tables. No automatic schema migration.
+Parser dependencies stay outside the viewer process; configuration and corpus
+inputs never enter Git.
 
 ## Why these boundaries
 

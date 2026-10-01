@@ -155,6 +155,34 @@ def test_normal_text_file_is_not_misread_as_url_batch(tmp_path):
     assert read_urls(path) is None
 
 
+def test_watcher_uses_source_directory_and_separate_durable_state(monkeypatch, tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    state = tmp_path / "private-state"
+    worker = InboxWorker(source, state_dir=state)
+    calls = []
+    monkeypatch.setattr(subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs)) or SimpleNamespace(returncode=0))
+    worker.run_ingest("test.md")
+    assert worker.inbox == state / "inbox"
+    assert calls[0][0][1] == str(source / "ingest.py")
+    assert calls[0][1]["cwd"] == source
+
+
+def test_viewer_uses_frozen_bundled_ingest_project(monkeypatch, tmp_path):
+    source = tmp_path / "ingest"
+    source.mkdir()
+    monkeypatch.setattr(viewer, "INGEST_DIR", source)
+    monkeypatch.setattr(viewer, "LOG_DIR", tmp_path)
+    monkeypatch.setattr(viewer, "_ingest_jobs", {})
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", lambda command, **kwargs: calls.append((command, kwargs)) or SimpleNamespace(pid=42))
+    result = viewer.ingest_url(viewer.IngestUrlRequest(url="https://example.org/test"))
+    assert result.status_code == 200
+    assert calls[0][0][:5] == ["uv", "run", "--frozen", "--project", str(source)]
+    assert calls[0][0][5] == str(source / "ingest.py")
+    assert calls[0][1]["cwd"] == str(source)
+
+
 def test_malformed_explicit_url_batch_is_retained(monkeypatch, tmp_path):
     worker = InboxWorker(tmp_path)
     worker.settle = 0

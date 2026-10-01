@@ -36,7 +36,7 @@ External siblings consumed as dependencies (see `[tool.uv.sources]`):
 External system dependencies (assumed present, NOT managed by Bifröst):
 
 - Postgres with `vector` and `pg_trgm` extensions and the standard
-  `documents` + `chunks` schema (see `~/ai/ingest/schema.sql`).
+  `documents` + `chunks` schema (see `ingest/schema.sql`).
 - Ollama with the embedding model (`nomic-embed-text`) and chat model
   (`llama3.2:3b`) referenced in `.env`.
 
@@ -181,5 +181,14 @@ of browser polling. runtime_support.py owns atomic cache publication; local_serv
 owns loopback plus configured listener sockets. Fingerprint prefix v3 selects sparse
 document neighbors and preserves existing payload fields. Existing cache files are
 kept recoverable. scripts/watch_inbox.py is an optional ingest CLI supervisor,
-with parsing/storage ownership remaining in the private sibling pipeline.
+with parsing/storage ownership remaining in the separate bundled ingest component.
 See INTERFACE.md and docs/operations.md for current contracts and limits.
+
+## Bundled ingest ownership (2026-09-30)
+
+The ingest/ subproject owns the published parser/embedding CLI, schema and frozen
+dependencies. It remains a separate subprocess domain; viewer.py delegates rather
+than writing source tables. URL jobs use uv run --frozen --project ingest. The
+watcher uses that same source runtime, with INGEST_ENV_FILE and INGEST_STATE_DIR
+pointing to private configuration and durable inbox storage independently. Existing
+local sibling entry points forward to the bundled source for compatibility.

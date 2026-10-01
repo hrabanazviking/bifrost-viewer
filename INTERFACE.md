@@ -20,3 +20,9 @@ Maintenance retries database connections and absent/corrupt graphs without requi
 an open browser. Failed builds have a cooldown; obsolete builds are superseded when
 new corpus rows change the fingerprint. Fingerprints use row count and maximum ID,
 so editing existing source rows in place still requires a forced rebuild.
+
+POST /api/ingest/url now delegates to the bundled ingest/ subproject with its
+frozen environment. Its job/status response shape is unchanged.
+VIEWER_INGEST_PROJECT_DIR optionally selects another source project;
+INGEST_ENV_FILE selects private CLI configuration inherited by the subprocess.
+The watcher separately uses INGEST_PROJECT_DIR and INGEST_STATE_DIR.

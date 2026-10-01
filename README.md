@@ -55,7 +55,8 @@ Cyber-Viking. Deep space-blue background, glowing neon rainbow on the title (lit
   documents (id, title, content_type, source, ...)
   chunks    (id, document_id, chunk_index, text, embedding vector(N), tsv tsvector, ...)
   ```
-  (A typical ingest layout that produces these tables: [pgvector docs](https://github.com/pgvector/pgvector). The companion ingest project that originally generated this schema isn't published, but any pipeline that fills those tables will work.)
+  The bundled [ingest component](ingest/README.md) includes the CLI, schema and
+  separate frozen parser runtime. Any pipeline that fills these tables also works.
 - **[uv](https://github.com/astral-sh/uv)** for dep management
 - **[Ollama](https://ollama.com/)** running locally (or on your tailnet) with at minimum an embedding model (e.g. `nomic-embed-text`). A chat model (e.g. `llama3.2:3b`) is needed for HyDE search and cluster naming.
 - **Optional but recommended:** `skein-kg` and `skry-kg` cloned as siblings (`../skein-kg`, `../skry-kg`) for entity-graph features.
@@ -74,7 +75,10 @@ uv sync
 uv run viewer.py
 ```
 
-Open **http://localhost:8731/?token=YOUR_TOKEN_HERE** in a browser.
+Open **http://localhost:8731/** and enter the `VIEWER_TOKEN` configured in `.env`.
+The Bifröst Second Brain desktop launcher reads that file and signs in automatically.
+See [ingest/README.md](ingest/README.md) to install document/URL ingestion and retain
+an existing private inbox.
 
 ## Run as a systemd user service
 

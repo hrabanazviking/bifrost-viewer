@@ -6,3 +6,5 @@ graph_builder.py owns disposable graph computation and closes its own pool.
 runtime_support.py publishes derived JSON atomically; it does not touch source data.
 local_server.py binds the configured listener and loopback without opening a new public interface.
 The static frontend starts in document overview and preserves the existing detailed chunk view.
+ingest/ owns the published CLI, schema and separate frozen parser environment.
+The viewer delegates to it; ingestion source and private runtime data are separate.

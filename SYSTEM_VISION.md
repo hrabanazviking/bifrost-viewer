@@ -91,7 +91,7 @@ from its vision and must be returned.
 
 ## What This Project Is Not
 
-- Not a content-management system. (See [the Ingest project](../ingest/) for
+- Not a content-management system. (See [the Ingest component](ingest/) for
   that.)
 - Not the source of truth for knowledge. (That is Postgres + pgvector.)
 - Not a knowledge-graph extractor. (See [`skein-kg`](../skein-kg/) for that.)

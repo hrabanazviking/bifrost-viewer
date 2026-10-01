@@ -8,8 +8,9 @@
 
 ## Law of the Sacred Source
 
-The `documents` and `chunks` tables are owned by the Ingest project, not by
-Bifröst. **Bifröst may read them; Bifröst may not write to them, modify them,
+The `documents` and `chunks` tables are owned by the Ingest component, whose
+source now lives in `ingest/` in this repository. **The Bifröst viewer may read
+them; the viewer may not write to them, modify them,
 or schema-migrate them.** Bifröst's own tables are `skein_*` (managed by the
 `skein-kg` library) and `kg_*` (legacy llama-extraction tables, kept for
 comparison). Bifröst writes only to its own tables and to `.cache/`.
@@ -36,9 +37,11 @@ both stdout (for systemd journal) and `logs/bifrost.log`.
 
 ## Law of Pool Discipline
 
-There is **one** DB pool, opened lazily at first need, closed on shutdown. No
+Within the viewer process there is **one** DB pool, opened lazily at first need,
+closed on shutdown. No
 new `psycopg.connect(...)` calls outside `db_conn()`. The pool config is in
-`get_pool()`; tune it there only.
+`get_pool()`; tune it there only. The separate ingest process owns its own
+document-write connection and transaction.
 
 ## Law of Token Discipline
 

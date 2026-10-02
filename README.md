@@ -1,4 +1,3 @@
----
 
 ![https://raw.githubusercontent.com/hrabanazviking/bifrost-viewer/refs/heads/main/336860c7-24fa-4e82-80ea-933c5f3a67c5.jpeg](https://raw.githubusercontent.com/hrabanazviking/bifrost-viewer/refs/heads/main/336860c7-24fa-4e82-80ea-933c5f3a67c5.jpeg)
 

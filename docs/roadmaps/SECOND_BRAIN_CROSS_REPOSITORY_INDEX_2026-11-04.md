@@ -25,6 +25,10 @@ The new capabilities are: ordinary incremental updates by source delta, persiste
 
 See [Managed Raw Library / Folders / Delta Ingestion](SECOND_BRAIN_MANAGED_RAW_LIBRARY_FOLDERS_2026-11-19.md), companion to the [additive upgrade roadmap](SECOND_BRAIN_ADDITIVE_INCREMENTAL_MULTIMODAL_GATEWAY_2026-11-19.md). Original files remain in nested folders; Bifröst stores category ancestry and all source locations separately from content hashes, reuses derived work for duplicates, updates source metadata on moves without re-embedding, and runs an owner-invoked changed-files-only scan. Bifröst Ingest owns the source-instance ledger; Skein updates only affected graph evidence; Skry queries the folder context read-only. Status: planned, not deployed.
 
+## Three-tier memory policy (newer owner decision, 2026-11-19)
+
+[Long-term / Medium-term / Short-term Memory Architecture](SECOND_BRAIN_THREE_TIER_MEMORY_ARCHITECTURE_2026-11-19.md): **permanently immutable long-term accepted knowledge**, **mutable medium-term current focus**, and **ephemeral short-term context purged on expiry**. Ravens supplies optional association/decay for mutable focus, HugrGate optional judgment triage, Skein versioned derivatives and Skry read-only retrieval. Read-only clients share whole-brain knowledge access; per-session transient chat memory is separate. New corrections append rather than overwrite old long-term content. No running implementation is asserted.
+
 ## Published public repositories and documents
 
 | Repository | Complete master roadmap | Repository responsibilities | Role |

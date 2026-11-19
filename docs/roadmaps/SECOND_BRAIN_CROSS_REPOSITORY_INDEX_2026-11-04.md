@@ -1,6 +1,7 @@
 # Bifröst Second Brain: Cross-Repository Roadmap Index
 
 **Published:** 2026-11-04  
+**Updated:** 2026-11-19 (additive design update)  
 **Status:** Cross-repository planning documents; no runtime features implied by the presence of these files.  
 **Scope:** Public integration index. Private repositories are intentionally omitted from this public table.
 
@@ -11,6 +12,34 @@
 The original roadmap contains approximately 10,357 words and covers verified backup and restore, truly resumable processing, incremental Skein graph construction, optional local/cloud/hybrid inference, cost controls, Kista as a secret broker, a technically rich Observatory, LibreOffice editing, Google Docs/Drive import/export, project management inside Bifröst and optional external application access.
 
 For each public repository listed below, the **full roadmap has been copied intact** into its own `docs/roadmaps/` directory. Each also has a shorter, repository-specific Markdown file defining its distinct responsibilities and acceptance tests.
+
+## Latest design authority (2026-11-19)
+
+The [newer additive modernization and living visual lore addendum](SECOND_BRAIN_ADDITIVE_INCREMENTAL_MULTIMODAL_GATEWAY_2026-11-19.md) accompanies the canonical master roadmap and supersedes older conflicting design prohibitions, including Skein's original no-incremental rule. **Current code and deployment status must still be verified separately.**
+
+The new capabilities are: ordinary incremental updates by source delta, persistent revocable read-only keys, optional G14 gateway to existing Z13 Gufo inference, mandatory comprehensive image description and visible-trait extraction, owner-curated character/asset visual identity canon for image-generation systems, cross-modal retrieval, and performance testing before selective remote inference offload. Original source documents and the last known-good published graph remain protected.
+
+**Distribution policy:** Bifröst owns the canonical master and full addendum; Skein and Skry each own implementation-specific responsibility addenda; Gufo owns inference-service behavior, not brain data. Dated roadmap mirrors are snapshots and should be reissued deliberately after the canonical plan is reviewed. Consumer repos link to the canonical design rather than becoming competing sources of truth.
+
+## Owner-managed raw library and folder provenance (2026-11-19)
+
+See [Managed Raw Library / Folders / Delta Ingestion](SECOND_BRAIN_MANAGED_RAW_LIBRARY_FOLDERS_2026-11-19.md), companion to the [additive upgrade roadmap](SECOND_BRAIN_ADDITIVE_INCREMENTAL_MULTIMODAL_GATEWAY_2026-11-19.md). Original files remain in nested folders; Bifröst stores category ancestry and all source locations separately from content hashes, reuses derived work for duplicates, updates source metadata on moves without re-embedding, and runs an owner-invoked changed-files-only scan. Bifröst Ingest owns the source-instance ledger; Skein updates only affected graph evidence; Skry queries the folder context read-only. Status: planned, not deployed.
+
+## Three-tier memory policy (newer owner decision, 2026-11-19)
+
+[Long-term / Medium-term / Short-term Memory Architecture](SECOND_BRAIN_THREE_TIER_MEMORY_ARCHITECTURE_2026-11-19.md): **permanently immutable long-term accepted knowledge**, **mutable medium-term current focus**, and **ephemeral short-term context purged on expiry**. Ravens supplies optional association/decay for mutable focus, HugrGate optional judgment triage, Skein versioned derivatives and Skry read-only retrieval. Read-only clients share whole-brain knowledge access; per-session transient chat memory is separate. New corrections append rather than overwrite old long-term content. No running implementation is asserted.
+
+## Journaled and branchable long-term archive (new owner decision 2026-11-19)
+
+[Git-like Journaled Long-Term Memory](SECOND_BRAIN_GITLIKE_JOURNALED_ARCHIVE_2026-11-19.md) adds immutable commit manifests, append-only event journal, protected branch heads, history/compare/merge, owner-controlled **non-destructive rollback**, historical retrieval and optional Samverk interoperability. This is distinct from filesystem journaling, PostgreSQL WAL, and consistent storage backups. Source files and archive snapshots stay protected: edits append new immutable versions, folder moves update separate source-instance path metadata, and temporary short-term sessions never enter the archive journal. No live deployment is implied.
+
+## Optional Yggdrasil 2.0 esoteric cognitive architecture (2026-11-19)
+
+[Canonical Yggdrasil 2.0 Second-Brain architecture roadmap](YGGDRASIL_2_ESOTERIC_COGNITIVE_ARCHITECTURE_SECOND_BRAIN_2026-11-19.md): revives and significantly expands the original NorseSagaEngine world-tree concepts as an application-neutral optional mental/cognitive layer. Proposed Nine-World functions: metacognition, association, symbolic interpretation, grounding, counterexample challenge, conceptual construction, verification, transformation and deep historical retrieval. The Norns handle historical immutable archive, changing focus, and bounded possible futures; Mímir provides reflective integration. HugrGate selects suitable cognition and Gufo resources only when needed. Bifröst remains the sole archive and owner of Three-Tier memory; original game remains independent. Planned documentation only, with no claim of deployment or verified speed gain.
+
+## Optional Verdandi present-tense metacognitive nervous system (2026-11-19)
+
+[Verdandi Observation, HugrGate Acceleration and Second Brain Integration](VERDANDI_OBSERVATION_REACTION_SECOND_BRAIN_INTEGRATION_2026-11-19.md) defines a **separate optional real-time observation/reaction module** for safe Bifröst ingestion/graph/visual-lore/Gufo/three-tier-memory health metadata. Verdandi already has a fast Unix event bus, HG-T4 reflex binding, owner-approved reflex registry, and heartbeat; its new feature-branch prototype adds opt-in deterministic prefiltering of nonmatches and ephemeral bounded metacognitive event detection. This avoids needless judgment requests and never autowrites archive knowledge. The existing Verdandi persistent JSONL feed is not valid storage for Bifröst short-term chat, which must expire. No Bifröst deployment or actual production performance measurement is claimed.
 
 ## Published public repositories and documents
 

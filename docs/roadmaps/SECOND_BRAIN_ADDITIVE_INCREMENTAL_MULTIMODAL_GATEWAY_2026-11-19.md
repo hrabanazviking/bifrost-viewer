@@ -4,6 +4,10 @@
 **Status:** Engineering addendum and implementation plan; NOT proof of deployed functionality  
 **Authority:** Updates and supersedes older conflicting design assumptions while extending the [canonical November 4 master expansion roadmap](BIFROST_SECOND_BRAIN_MASTER_EXPANSION_ROADMAP_2026-11-04.md) and the [cross-repository index](SECOND_BRAIN_CROSS_REPOSITORY_INDEX_2026-11-04.md).
 
+## New owner memory law (2026-11-19)
+
+The Second Brain must distinguish **long-term immutable canonical evidence**, **medium-term adjustable current focus domains**, and **short-term volatile context that expires without lasting**. Never implement all memory as an undifferentiated persistent text/index table. Original long-term records cannot be edited in place; new corrections are appended and explicitly linked. Medium focus changes affect ranking and associations, not source embeddings. Short-term sessions must not silently enter backups, logs or graph stores. Uniform read-only access for all authorized characters continues without collection configuration, with separate ephemeral conversation buffers by session. [Canonical detailed specification and tests](SECOND_BRAIN_THREE_TIER_MEMORY_ARCHITECTURE_2026-11-19.md).
+
 ## Decision and mission
 
 Evolve the existing Bifröst Second Brain through optional, versioned, additive modules. Do not rebuild, overwrite, or re-index the entire corpus when an AI client connects, a source is appended, or one relation changes. Existing documents, chunks, embedding identity, working APIs, published Skein graph, installed collectors, application integrations, and owner control must remain intact.

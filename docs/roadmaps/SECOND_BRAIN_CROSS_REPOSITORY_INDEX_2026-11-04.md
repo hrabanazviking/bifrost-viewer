@@ -21,6 +21,10 @@ The new capabilities are: ordinary incremental updates by source delta, persiste
 
 **Distribution policy:** Bifröst owns the canonical master and full addendum; Skein and Skry each own implementation-specific responsibility addenda; Gufo owns inference-service behavior, not brain data. Dated roadmap mirrors are snapshots and should be reissued deliberately after the canonical plan is reviewed. Consumer repos link to the canonical design rather than becoming competing sources of truth.
 
+## Owner-managed raw library and folder provenance (2026-11-19)
+
+See [Managed Raw Library / Folders / Delta Ingestion](SECOND_BRAIN_MANAGED_RAW_LIBRARY_FOLDERS_2026-11-19.md), companion to the [additive upgrade roadmap](SECOND_BRAIN_ADDITIVE_INCREMENTAL_MULTIMODAL_GATEWAY_2026-11-19.md). Original files remain in nested folders; Bifröst stores category ancestry and all source locations separately from content hashes, reuses derived work for duplicates, updates source metadata on moves without re-embedding, and runs an owner-invoked changed-files-only scan. Bifröst Ingest owns the source-instance ledger; Skein updates only affected graph evidence; Skry queries the folder context read-only. Status: planned, not deployed.
+
 ## Published public repositories and documents
 
 | Repository | Complete master roadmap | Repository responsibilities | Role |

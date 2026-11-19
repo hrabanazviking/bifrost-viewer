@@ -2,13 +2,16 @@
 ## The Living Library of Mímir — a local-first, modular, observable, resumable AI Second Brain
 
 **Status:** Architecture and implementation roadmap; proposed work, not a claim of implementation  
-**Version:** 1.0 planning baseline  
+**Version:** 1.1 planning revision (original 2026-11-04 baseline plus 2026-11-19 owner decisions)  
 **Date:** 2026-11-04  
 **Primary home:** `hrabanazviking/bifrost-viewer`  
 **Companion projects:** `hrabanazviking/skein-kg` and `hrabanazviking/skry-kg`  
 **Optional integration:** `hrabanazviking/kista` (encrypted secrets vault; not a knowledge store)  
 **Primary deployment target:** Linux / Kubuntu, NVIDIA RTX 2060 with **6 GiB VRAM**; preserve existing local machine and PostgreSQL data  
 **License and attribution:** Preserve each repository's existing license and attribution; review each third-party reference before reuse  
+
+> **Superseding owner decision, 2026-11-19:** The latest owner-approved requirements supersede older conflicting project rules. Incremental source/graph updates are the preferred normal mode; an older Skein prohibition against incremental updates is obsolete as a *design rule*, though the currently installed full-build implementation is retained for compatibility and recovery until the incremental implementation is tested. Detailed implementation scope: [November 19 Additive/Multimodal/Visual Lore/Gufo Addendum](SECOND_BRAIN_ADDITIVE_INCREMENTAL_MULTIMODAL_GATEWAY_2026-11-19.md). The addendum introduces permanent read-only tokens (optional), a G14 read-only Janitor/SillyTavern gateway to Z13 Gufo, exhaustive image captions/traits, living visual lore for image generation, cross-modal asset retrieval, model offload benchmarking and explicit deployment/acceptance gates. This updates architecture requirements, **not** a claim that code or running services have changed.
+
 **Security classification:** **PUBLIC DESIGN ONLY.** This file must contain no actual credentials, private documents, secret values, personal account identifiers, local private-state contents, or database dumps.
 
 > **North star:** Keep the existing Second Brain and its original research intact. Transform it into a modular and dependable knowledge ecosystem that can choose between local, cloud, and hybrid processing; pause for sonic quiet; resume after shutdown; grow its graph incrementally; store verified backups on a dedicated document-backup drive; provide a wonderful technical observatory; edit and synchronize documents; manage projects inside Bifröst; and expose carefully authorized knowledge services to other applications.

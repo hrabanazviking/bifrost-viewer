@@ -37,6 +37,10 @@ See [Managed Raw Library / Folders / Delta Ingestion](SECOND_BRAIN_MANAGED_RAW_L
 
 [Canonical Yggdrasil 2.0 Second-Brain architecture roadmap](YGGDRASIL_2_ESOTERIC_COGNITIVE_ARCHITECTURE_SECOND_BRAIN_2026-11-19.md): revives and significantly expands the original NorseSagaEngine world-tree concepts as an application-neutral optional mental/cognitive layer. Proposed Nine-World functions: metacognition, association, symbolic interpretation, grounding, counterexample challenge, conceptual construction, verification, transformation and deep historical retrieval. The Norns handle historical immutable archive, changing focus, and bounded possible futures; Mímir provides reflective integration. HugrGate selects suitable cognition and Gufo resources only when needed. Bifröst remains the sole archive and owner of Three-Tier memory; original game remains independent. Planned documentation only, with no claim of deployment or verified speed gain.
 
+## Optional Verdandi present-tense metacognitive nervous system (2026-11-19)
+
+[Verdandi Observation, HugrGate Acceleration and Second Brain Integration](VERDANDI_OBSERVATION_REACTION_SECOND_BRAIN_INTEGRATION_2026-11-19.md) defines a **separate optional real-time observation/reaction module** for safe Bifröst ingestion/graph/visual-lore/Gufo/three-tier-memory health metadata. Verdandi already has a fast Unix event bus, HG-T4 reflex binding, owner-approved reflex registry, and heartbeat; its new feature-branch prototype adds opt-in deterministic prefiltering of nonmatches and ephemeral bounded metacognitive event detection. This avoids needless judgment requests and never autowrites archive knowledge. The existing Verdandi persistent JSONL feed is not valid storage for Bifröst short-term chat, which must expire. No Bifröst deployment or actual production performance measurement is claimed.
+
 ## Published public repositories and documents
 
 | Repository | Complete master roadmap | Repository responsibilities | Role |

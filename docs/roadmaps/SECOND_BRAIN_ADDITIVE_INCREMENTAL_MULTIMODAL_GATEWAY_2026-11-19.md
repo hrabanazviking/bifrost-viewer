@@ -26,6 +26,14 @@ This is ONE integrated system with feature-gated extensions, not a parallel repl
 5. **Z13 acceleration is optional and measured.** Keep Postgres, source-of-truth and job state on G14. Send expensive AI extraction, captioning, scene analysis and embeddings over the private network to Gufo or another tested Z13-local worker, and send structured results back. Don't move the DB or replace its models simply because the Z13 is faster on some workloads.
 6. **Documented change vs deployment:** all items are proposed until benchmarks, passing tests and explicit owner-authorized live rollout; public repos must never contain uploaded private images, identity-specific dossiers or keys.
 
+## Additional owner directive: managed raw filesystem and duplicate-aware folder locations
+
+The owner also requests a permanent, nested owner-managed RawLibrary where original files **stay in their actual folders**. The separate existing top-level ingestion inbox continues to work. The owner presses **Ingest New Files** to recursively discover only new/changed assets while preserving folder category and ancestry information.
+
+**Three distinct facts must be modeled independently:** (1) the reusable content record and derived model work, (2) each original file/source instance and version, (3) each current and former folder/path location. When a file **moves**, update its path and category associations at nearly metadata-only cost, without re-embedding unchanged bytes. When an identical **copy** exists in another folder, preserve both current locations and both category hierarchies but reuse compatible content-level embeddings, captions and graph extraction. When the file's content changes, process only changed text chunks or changed media/segments and affected graph relations; not the whole corpus. An unavailable mount is not a deletion. Do not rely on the current `documents.hash UNIQUE` field alone as it cannot represent multiple source instances.
+
+Full specification, migration constraints and acceptance tests: [November 19 Managed Raw Library, Folder Taxonomy and Delta Ingestion](SECOND_BRAIN_MANAGED_RAW_LIBRARY_FOLDERS_2026-11-19.md). This is a mandatory part of the same second-brain modernization plan, not an unrelated application.
+
 ## Verified public repository baseline and outstanding unknowns
 
 - Bifröst Viewer already has a human workspace, Connect an AI flow, scoped API keys, portable REST client, and optional MCP stdio adapter. Start with security/store.py, security/routes.py, security/gateway.py, static/security.html, static/security.js, AI_CONNECT.md, clients/, inference.py, and ingest/.

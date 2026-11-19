@@ -15,6 +15,10 @@ The G14 Second Brain gains an ordinary owner-managed, nested raw-file library. T
 
 The system must distinguish **moved** files (a previous path disappeared and a newly detected path holds the same identity/content), **copied** files (old and new paths both exist), **edited** files (existing identity/path, new content), and **new independent files with identical bytes** (different provenance, same reusable content payload). Do not guess a move or delete a source merely because a drive is temporarily disconnected.
 
+## Three-tier relationship to this raw library
+
+Folder-organized source files are **user-managed mutable inputs**. A file may be edited, copied or moved without mutating the **long-term immutable archived version** previously accepted into the brain. New file content produces a **new versioned immutable long-term entry**; current source-instance paths and categories are mutable provenance pointers. Folder/project subtrees can activate **medium-term focus domains** without duplicating permanent knowledge. A newly scanned file is not a temporary **short-term session** merely because it was recently seen; short-term holds only volatile task/conversation context and is purged. All principles and gates: [Three-Tier Memory Architecture](SECOND_BRAIN_THREE_TIER_MEMORY_ARCHITECTURE_2026-11-19.md).
+
 ## Existing repository reality
 
 - `scripts/watch_inbox.py` currently polls the inbox with top-level `iterdir()`, calls the existing ingest CLI, and moves completed jobs into `processed/`. Preserve this workflow unchanged.

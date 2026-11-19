@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-19  
 **Status:** Engineering addendum and implementation plan; NOT proof of deployed functionality  
-**Authority:** Supplements, does not replace, the [canonical November 4 master expansion roadmap](BIFROST_SECOND_BRAIN_MASTER_EXPANSION_ROADMAP_2026-11-04.md) and the [cross-repository index](SECOND_BRAIN_CROSS_REPOSITORY_INDEX_2026-11-04.md).
+**Authority:** Updates and supersedes older conflicting design assumptions while extending the [canonical November 4 master expansion roadmap](BIFROST_SECOND_BRAIN_MASTER_EXPANSION_ROADMAP_2026-11-04.md) and the [cross-repository index](SECOND_BRAIN_CROSS_REPOSITORY_INDEX_2026-11-04.md).
 
 ## Decision and mission
 
@@ -16,6 +16,15 @@ Work spans four coordinated tracks:
 4. **Multimodal memories**: add native references and retrieval for image, audio, video, and document layout without discarding the established text corpus.
 
 This is ONE integrated system with feature-gated extensions, not a parallel replacement brain or a new mandatory database stack.
+
+## November 19 owner decisions: design authority and release policy
+
+1. **Newer owner-approved design decisions supersede older contradictory project laws.** The November 4 incremental roadmap is authoritative over the older Skein rule forbidding incremental updates. Change `skein-kg/PROJECT_LAWS.md` and `PHILOSOPHY.md` to explicitly allow and prioritize incremental processing. Do not preserve a prohibition merely because an older file calls itself immutable.
+2. **Keep older code working while updating the laws.** The existing full rebuild remains a backward-compatible manual/repair option, not the mandatory response to an ordinary source addition, revision, connection setup, or API change.
+3. **Visual memory is active living lore, not passive file storage.** Every newly ingested image must produce a comprehensive, human-readable, structured textual description and structured visual attributes, plus optional multimodal embeddings. Store originals and descriptive derivatives side by side, tied by stable provenance.
+4. **Visual lore is reusable across image generators.** Offer an authenticated read-only query and prompt/reference-asset assembly contract for Gufo image generation, ComfyUI, A1111/Forge and other authorized models; do not hard-wire to one client.
+5. **Z13 acceleration is optional and measured.** Keep Postgres, source-of-truth and job state on G14. Send expensive AI extraction, captioning, scene analysis and embeddings over the private network to Gufo or another tested Z13-local worker, and send structured results back. Don't move the DB or replace its models simply because the Z13 is faster on some workloads.
+6. **Documented change vs deployment:** all items are proposed until benchmarks, passing tests and explicit owner-authorized live rollout; public repos must never contain uploaded private images, identity-specific dossiers or keys.
 
 ## Verified public repository baseline and outstanding unknowns
 
@@ -159,3 +168,67 @@ This addendum is a design and test specification. **No running feature is proven
 - [Skein's original immutable project laws](https://github.com/hrabanazviking/skein-kg/blob/main/PROJECT_LAWS.md).
 - [Bifröst security technical manual](../../security/TECHNICAL_MANUAL.md) (relative path from this addendum; check rendered link).
 - [Bifröst AI connection guide](../../AI_CONNECT.md) (relative path from this addendum; check rendered link).
+
+## Track E: living visual lore for image-generation AI (owner requirement)
+
+### E1. Automatically describe every image at ingest
+
+- [ ] Image ingestion MUST create a detailed natural-language description and structured typed record for each asset. Process no image as an opaque file only; expose an explicit pending/failed extraction status if the captioning service is unavailable, while still retaining the original.
+- [ ] Extract visually grounded details: subject count and type; visible physical traits (hair, visible eyes, face shape, facial hair, build, age appearance only as uncertain if relevant); clothing by individual garment, material, color, cut, fit, closures, jewelry, shoes, accessories; posture, gesture, gaze, facial expression; subject/object relationships; background, setting, location clues, architecture, weather and time-of-day appearance; lighting direction and quality, shadows, reflections; composition, camera framing, lens/perspective approximation, aspect ratio, focus/depth; artistic medium/style, line work, texture, color palette and color relationships; props, symbols, motifs, readable inscriptions and OCR; scene activity, emotional tone and atmosphere. Describe only what can be observed; do not invent off-frame body features, personal identity, hidden traits, real-world history or exact technical camera settings.
+- [ ] Preserve coordinates/bounding boxes or regions where the extractor actually supports them; retain visual descriptions of individual persons/objects and their spatial relationships instead of a single undifferentiated paragraph.
+- [ ] Capture model ID, version, prompt/schema, timestamps, provenance, output confidence and uncertainty (including occlusions/low resolution) and separate directly observed traits from model guesses and owner-asserted canon.
+- [ ] Store both a fluent exhaustive text description (for text search and image prompts) and versioned JSON-style structured traits, optionally a short caption, OCR transcript, color statistics, hashes and multimodal embedding. Existing text search should find captions through normal full-text/hybrid retrieval without forcing all text embeddings to change.
+- [ ] Make analyses rerunnable for selected images if a better vision model appears, keeping versions and owner edits. Never silently overwrite previously approved canon when extraction models disagree.
+- [ ] Deduplicate identical original assets by hash; keep legitimate distinct usage/source records and user-selected alternative interpretations. Avoid saving the same derived chunk repeatedly after rescans.
+
+### E2. Identity, visual canon and scene variation
+
+- [ ] Allow a `visual_entity_id` linking multiple reference images to a character, product, location, environment, costume, creature or object where the owner explicitly assigns or confirms it; never assume photographs of different people are the same person.
+- [ ] Maintain two layers: **canonical persistent traits** (owner-approved identity, identifying hairstyle/eyes/accessories when visible and consistent, design rules, species/character type where relevant) and **per-image variant traits** (outfit, pose, makeup, lighting, hairstyle variation, scene, style).
+- [ ] Build a cross-reference consistency report that compares corroborating and conflicting depictions, and preserve per-image evidence. The owner may pin, revise, reject or merge inferred traits.
+- [ ] Support visible positive specifications and negative constraints, including owner-specified "never include" outfit/prop/style elements, but don't fabricate hidden facts from pictures.
+- [ ] Keep user-defined character sheets separate from automatically extracted text. Cross-image synthesis may propose canon; only owner-approved changes alter it.
+
+### E3. Living prompt and reference assembly
+
+- [ ] Provide documented `visual_lore.search`, `visual_lore.entity`, `visual_lore.references` and `visual_lore.compose` read-only operations through Bifröst's API, reusing its existing token system.
+- [ ] Query on text or an input image; return top relevant reference assets with descriptors, structured trait bundles, similarity/sourcing scores, and read-authorized image handles (not public uncontrolled links).
+- [ ] Compose model-specific positive prompt, optional negative prompt, scene/identity/style segments, reference-image list, suggested weights and aspect ratio. Indicate which fields are exact owner-authored canon versus generated estimates.
+- [ ] Support prompt-only systems, multimodal chat/vision models, reference-image editing, image-to-image, IP-Adapter-style identity conditioning, ControlNet-style pose/composition guidance, and explicitly registered LoRA triggers if a user installs them; do not claim all models support all mechanisms.
+- [ ] Keep authorized original reference-image bytes accessible through a separate secure asset endpoint where supported; prompt text alone is not sufficient for consistent visual identity.
+- [ ] Offer user-controlled "feedback after generation" to link an output to the prompt, reference images, model, seed, chosen traits and revisions. New generated images are NOT silently promoted to identity canon.
+- [ ] Treat the visual lore library as a persistent read-only source for image generation; optional user-approved ingestion of generated outputs is a distinct write operation.
+
+### E4. Z13-native Gufo acceleration and safe resource scheduling
+
+- [ ] Verify which Gufo model and service version actually runs on the Z13; the repository documents Qwen3.8 vision-language models, EmbeddingGemma 2 shared-space embeddings for text/image/audio/video, Qwen3-ASR and image-generation models, but documentation is not proof that these models are installed/ready.
+- [ ] Use a vision-capable Gufo LLM or separately tested vision worker for detailed captions/trait extraction. Use EmbeddingGemma 2 or another explicitly compatible model to index cross-modal assets; its vector space is distinct from pre-existing Bifröst text embeddings unless an equivalence test proves otherwise.
+- [ ] Preserve Gufo's independently managed long-running service or on-demand service model and use private Tailscale transport; Bifröst remains the job owner and database writer.
+- [ ] Different model endpoints may require separate services/ports. Probe service health and model availability; do not assume one server instance can run all loaded models or that an image generation endpoint handles captioning.
+- [ ] Apply resource admission: foreground Janitor/SillyTavern chat takes precedence over background document/image analysis. Bound concurrent heavy inference, GPU/UMA allocations, memory copies, queue depth and failures. Support quiet hours, pause/resume and CPU-only/no-vision fallbacks that preserve queued work.
+- [ ] Keep all private assets on trusted local machines. Prevent image data or captions crossing a hosted Janitor AI boundary unless specifically needed in a user-authorized request. Never expose raw Gufo HTTP to the Internet.
+- [ ] Record versioned and attributable generated descriptions, plus progress/error results, in the existing G14 ingestion/derived-store pipeline.
+
+**Acceptance E:** Adding one photograph stores its original and a comprehensive, searchable scene description; reference bundles support consistent image generation using owner-approved canon; uploading variant outfits does not overwrite identity; rescanning an unchanged image costs zero vision-model calls; changing just a visual caption doesn't trigger a full unrelated text/Skein rebuild; failures remain resumable.
+
+## Track F: fair performance comparison and deployment decision
+
+**Important distinction:** "DB update" is not one operation. Break the benchmark into (1) source parsing and dedup, (2) embedding calculation, (3) LLM vocabulary/entity extraction, (4) graph relations and affected-neighbor recomputation, (5) local PostgreSQL/pgvector writes, vacuum/index maintenance, (6) image/audio/video perception, and (7) across-device transport.
+
+- [ ] Capture unchanged-repo baseline on G14 (CPU, RTX 2060 6GB, real running services) using representative 10-, 100-, and 1000-document samples as feasible, plus at least 20 image files; never claim a synthetic estimated speedup as real.
+- [ ] Run equivalent prompt, model, quantization, batch, token budget and accuracy acceptance on Z13 wherever the **same** model fits both machines. For larger Z13-only models, measure output quality and wall-clock work rather than make an invalid equal-model throughput comparison.
+- [ ] Measure stage-by-stage median/p95 elapsed time, documents or assets/minute, generated tokens/sec, embedding items/sec, CPU/GPU/VRAM/UMA, startup overhead, tailnet request serialization, retry rate, power, and influence on interactive chat.
+- [ ] Control for concurrency, source hashes, embedding identity, cache warmth, inference backend, ROCm/Vulkan kernels, power settings, temperature and network latency. Include a no-change incremental run.
+- [ ] Compare **G14 all-local**, **G14 database + Z13 model workers**, and (only as a benchmark option, not an automatic deployment decision) **Z13 isolated copy with local database**, on synthetic or sanitized copies.
+- [ ] Use the G14 for transactional writes, index updates and scheduling unless measured evidence favors migrating the actual DB. Accelerating LLM calls alone does not eliminate SQL, WAL or HNSW insertion costs.
+- [ ] Decide offload per stage with explicit threshold and measured gain after transfer overhead; no hardcoded "N times faster" promise without measurements.
+- [ ] Even more consequential than a faster GPU: no-change sources should produce **zero redundant AI work**, and incremental graph updates should scale with the affected delta, not total corpus size.
+
+**Acceptance F:** Publish a reproducible report with real hardware and model configs, end-to-end elapsed times, relevant quality differences, energy/acoustic impact and a reversible workload placement decision; no source DB moved or re-embedded by inference benchmarking.
+
+## Documentation roll-out and precedence
+
+- The **canonical Bifröst master roadmap** remains the single source of architecture decisions. This dated November 19 addendum adds confirmed user requirements and supersedes older conflicting text.
+- **Skein PROJECT_LAWS and PHILOSOPHY must be revised** so older "no incremental" rules do not block the newer owner decision. Keep legacy full-build API behavior until a new, tested incremental API ships.
+- **All core project repos** should link to the newest canonical revision and add only their own responsibilities. Existing full roadmap copies are historical dated snapshots; do not mislabel them as a November 19 revision merely by changing links. Republish/version mirrors deliberately after canonical acceptance.
+- Consumer projects may reference the shared canonical API instead of cloning all code or storing copies of the brain. Maintain one current source of truth and test client compatibility.

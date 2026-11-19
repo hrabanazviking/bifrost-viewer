@@ -29,6 +29,10 @@ See [Managed Raw Library / Folders / Delta Ingestion](SECOND_BRAIN_MANAGED_RAW_L
 
 [Long-term / Medium-term / Short-term Memory Architecture](SECOND_BRAIN_THREE_TIER_MEMORY_ARCHITECTURE_2026-11-19.md): **permanently immutable long-term accepted knowledge**, **mutable medium-term current focus**, and **ephemeral short-term context purged on expiry**. Ravens supplies optional association/decay for mutable focus, HugrGate optional judgment triage, Skein versioned derivatives and Skry read-only retrieval. Read-only clients share whole-brain knowledge access; per-session transient chat memory is separate. New corrections append rather than overwrite old long-term content. No running implementation is asserted.
 
+## Journaled and branchable long-term archive (new owner decision 2026-11-19)
+
+[Git-like Journaled Long-Term Memory](SECOND_BRAIN_GITLIKE_JOURNALED_ARCHIVE_2026-11-19.md) adds immutable commit manifests, append-only event journal, protected branch heads, history/compare/merge, owner-controlled **non-destructive rollback**, historical retrieval and optional Samverk interoperability. This is distinct from filesystem journaling, PostgreSQL WAL, and consistent storage backups. Source files and archive snapshots stay protected: edits append new immutable versions, folder moves update separate source-instance path metadata, and temporary short-term sessions never enter the archive journal. No live deployment is implied.
+
 ## Published public repositories and documents
 
 | Repository | Complete master roadmap | Repository responsibilities | Role |

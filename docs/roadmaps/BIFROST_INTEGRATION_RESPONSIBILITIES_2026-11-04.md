@@ -46,3 +46,9 @@ Own the cross-repository roadmap, orchestrate work safely and serve the versione
 ## First safe engineering step
 
 Inventory the existing implementation and any newer unpublished local work, then write a small versioned integration interface and associated synthetic tests. Maintain independent project development and review operational changes before deployment.
+
+## Owner-required managed raw library extension (2026-11-19)
+
+Bifröst coordinates a user-managed nested RawLibrary and **Ingest New Files** button, extending rather than replacing the existing inbox. Ingest tracks source instances, normalized folder ancestry, file move/rename history, raw content hashes and stable versions; it reads only owner-approved filesystem roots. A duplicate in a second folder gets a separate association but no duplicate embeddings or image descriptions. A moved unchanged file updates location/category metadata only; edited files trigger only affected extraction and graph updates. Bifröst exposes folder/category browsing and read-only search through its existing API with universal AI access unchanged.
+
+Full acceptance details: [Managed Raw Library and Delta Ingestion](SECOND_BRAIN_MANAGED_RAW_LIBRARY_FOLDERS_2026-11-19.md). The [latest combined modernization plan](SECOND_BRAIN_ADDITIVE_INCREMENTAL_MULTIMODAL_GATEWAY_2026-11-19.md) remains design-only until tested and deployed.

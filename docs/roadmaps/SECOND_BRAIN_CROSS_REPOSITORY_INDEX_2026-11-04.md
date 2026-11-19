@@ -33,6 +33,10 @@ See [Managed Raw Library / Folders / Delta Ingestion](SECOND_BRAIN_MANAGED_RAW_L
 
 [Git-like Journaled Long-Term Memory](SECOND_BRAIN_GITLIKE_JOURNALED_ARCHIVE_2026-11-19.md) adds immutable commit manifests, append-only event journal, protected branch heads, history/compare/merge, owner-controlled **non-destructive rollback**, historical retrieval and optional Samverk interoperability. This is distinct from filesystem journaling, PostgreSQL WAL, and consistent storage backups. Source files and archive snapshots stay protected: edits append new immutable versions, folder moves update separate source-instance path metadata, and temporary short-term sessions never enter the archive journal. No live deployment is implied.
 
+## Optional Yggdrasil 2.0 esoteric cognitive architecture (2026-11-19)
+
+[Canonical Yggdrasil 2.0 Second-Brain architecture roadmap](YGGDRASIL_2_ESOTERIC_COGNITIVE_ARCHITECTURE_SECOND_BRAIN_2026-11-19.md): revives and significantly expands the original NorseSagaEngine world-tree concepts as an application-neutral optional mental/cognitive layer. Proposed Nine-World functions: metacognition, association, symbolic interpretation, grounding, counterexample challenge, conceptual construction, verification, transformation and deep historical retrieval. The Norns handle historical immutable archive, changing focus, and bounded possible futures; Mímir provides reflective integration. HugrGate selects suitable cognition and Gufo resources only when needed. Bifröst remains the sole archive and owner of Three-Tier memory; original game remains independent. Planned documentation only, with no claim of deployment or verified speed gain.
+
 ## Published public repositories and documents
 
 | Repository | Complete master roadmap | Repository responsibilities | Role |

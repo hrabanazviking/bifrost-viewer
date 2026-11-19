@@ -38,6 +38,10 @@ The owner also requests a permanent, nested owner-managed RawLibrary where origi
 
 Full specification, migration constraints and acceptance tests: [November 19 Managed Raw Library, Folder Taxonomy and Delta Ingestion](SECOND_BRAIN_MANAGED_RAW_LIBRARY_FOLDERS_2026-11-19.md). This is a mandatory part of the same second-brain modernization plan, not an unrelated application.
 
+## Additional long-term archive authority: append-only journal and Git-like branches
+
+The owner additionally requires the stable long-term knowledge tier to support immutable versioned objects, an append-only semantic change journal, Git-like commit DAG, branches, merge review, revert/rollback by adding a **new** committed view, and as-of search. Samverk is the optional external Git forge/interoperability provider: Bifröst owns its canonical archive and can keep working without Samverk. Do not store entire PostgreSQL vector indexes in Git; do not mistake filesystem journaling or PostgreSQL WAL for semantic history. Changes in raw file locations are provenance ledger updates, not revisions to the archived raw bytes. Medium focus changes and short-lived sessions must not become permanent commits. Full contract: [Git-like Journaled Long-Term Memory](SECOND_BRAIN_GITLIKE_JOURNALED_ARCHIVE_2026-11-19.md).
+
 ## Verified public repository baseline and outstanding unknowns
 
 - Bifröst Viewer already has a human workspace, Connect an AI flow, scoped API keys, portable REST client, and optional MCP stdio adapter. Start with security/store.py, security/routes.py, security/gateway.py, static/security.html, static/security.js, AI_CONNECT.md, clients/, inference.py, and ingest/.

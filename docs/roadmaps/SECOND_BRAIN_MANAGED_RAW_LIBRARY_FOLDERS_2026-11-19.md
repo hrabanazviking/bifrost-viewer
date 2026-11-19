@@ -19,6 +19,10 @@ The system must distinguish **moved** files (a previous path disappeared and a n
 
 Folder-organized source files are **user-managed mutable inputs**. A file may be edited, copied or moved without mutating the **long-term immutable archived version** previously accepted into the brain. New file content produces a **new versioned immutable long-term entry**; current source-instance paths and categories are mutable provenance pointers. Folder/project subtrees can activate **medium-term focus domains** without duplicating permanent knowledge. A newly scanned file is not a temporary **short-term session** merely because it was recently seen; short-term holds only volatile task/conversation context and is purged. All principles and gates: [Three-Tier Memory Architecture](SECOND_BRAIN_THREE_TIER_MEMORY_ARCHITECTURE_2026-11-19.md).
 
+## Connection to immutable journal and branches
+
+The owner approved [Git-like Journaled Long-Term Memory](SECOND_BRAIN_GITLIKE_JOURNALED_ARCHIVE_2026-11-19.md). RawLibrary files are editable/movable physical inputs while archive versions are immutable. Changed bytes or newly accepted interpretations add new archived versions and journaled commits, preserving previously committed evidence. Unchanged duplicate scans/moves create **no new content commit**, but legitimate path/category reference updates may be recorded in a separate mutable source ledger/audited metadata event. Branches represent different knowledge-view heads; branches are NOT filesystem folders. Rollback to a previous known-good *view* adds a restoring commit, never destroys original content. Exclude temporary short-term sessions from the permanent journal.
+
 ## Existing repository reality
 
 - `scripts/watch_inbox.py` currently polls the inbox with top-level `iterdir()`, calls the existing ingest CLI, and moves completed jobs into `processed/`. Preserve this workflow unchanged.

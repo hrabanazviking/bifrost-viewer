@@ -1,6 +1,7 @@
 # Bifröst Second Brain: Cross-Repository Roadmap Index
 
 **Published:** 2026-11-04  
+**Updated:** 2026-11-19 (additive design update)  
 **Status:** Cross-repository planning documents; no runtime features implied by the presence of these files.  
 **Scope:** Public integration index. Private repositories are intentionally omitted from this public table.
 
@@ -11,6 +12,14 @@
 The original roadmap contains approximately 10,357 words and covers verified backup and restore, truly resumable processing, incremental Skein graph construction, optional local/cloud/hybrid inference, cost controls, Kista as a secret broker, a technically rich Observatory, LibreOffice editing, Google Docs/Drive import/export, project management inside Bifröst and optional external application access.
 
 For each public repository listed below, the **full roadmap has been copied intact** into its own `docs/roadmaps/` directory. Each also has a shorter, repository-specific Markdown file defining its distinct responsibilities and acceptance tests.
+
+## Latest design authority (2026-11-19)
+
+The [newer additive modernization and living visual lore addendum](SECOND_BRAIN_ADDITIVE_INCREMENTAL_MULTIMODAL_GATEWAY_2026-11-19.md) accompanies the canonical master roadmap and supersedes older conflicting design prohibitions, including Skein's original no-incremental rule. **Current code and deployment status must still be verified separately.**
+
+The new capabilities are: ordinary incremental updates by source delta, persistent revocable read-only keys, optional G14 gateway to existing Z13 Gufo inference, mandatory comprehensive image description and visible-trait extraction, owner-curated character/asset visual identity canon for image-generation systems, cross-modal retrieval, and performance testing before selective remote inference offload. Original source documents and the last known-good published graph remain protected.
+
+**Distribution policy:** Bifröst owns the canonical master and full addendum; Skein and Skry each own implementation-specific responsibility addenda; Gufo owns inference-service behavior, not brain data. Dated roadmap mirrors are snapshots and should be reissued deliberately after the canonical plan is reviewed. Consumer repos link to the canonical design rather than becoming competing sources of truth.
 
 ## Published public repositories and documents
 
